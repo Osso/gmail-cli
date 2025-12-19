@@ -275,6 +275,8 @@ async fn main() -> Result<()> {
         }
         Commands::Spam { id } => {
             let client = get_client().await?;
+            // Try to unsubscribe first, ignore errors (not all messages have unsubscribe)
+            let _ = client.unsubscribe(&id).await;
             client.mark_spam(&id).await?;
             println!("Marked as spam {}", id);
         }

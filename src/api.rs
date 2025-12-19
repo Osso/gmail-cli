@@ -78,6 +78,15 @@ impl Client {
         }
     }
 
+    async fn check_response(resp: reqwest::Response) -> Result<reqwest::Response> {
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("HTTP {} - {}", status, body);
+        }
+        Ok(resp)
+    }
+
     async fn get<T: serde::de::DeserializeOwned>(&self, endpoint: &str) -> Result<T> {
         let url = format!("{}{}", BASE_URL, endpoint);
 
@@ -89,13 +98,39 @@ impl Client {
             .await
             .context("Failed to send request")?;
 
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            anyhow::bail!("HTTP {} - {}", status, body);
-        }
-
+        let resp = Self::check_response(resp).await?;
         resp.json().await.context("Failed to parse JSON response")
+    }
+
+    async fn post(&self, endpoint: &str) -> Result<()> {
+        let url = format!("{}{}", BASE_URL, endpoint);
+
+        let resp = self
+            .http
+            .post(&url)
+            .bearer_auth(&self.access_token)
+            .send()
+            .await
+            .context("Failed to send request")?;
+
+        Self::check_response(resp).await?;
+        Ok(())
+    }
+
+    async fn post_json<T: Serialize>(&self, endpoint: &str, body: &T) -> Result<()> {
+        let url = format!("{}{}", BASE_URL, endpoint);
+
+        let resp = self
+            .http
+            .post(&url)
+            .bearer_auth(&self.access_token)
+            .json(body)
+            .send()
+            .await
+            .context("Failed to send request")?;
+
+        Self::check_response(resp).await?;
+        Ok(())
     }
 
     pub async fn list_labels(&self) -> Result<LabelList> {
@@ -118,29 +153,12 @@ impl Client {
     }
 
     pub async fn modify_labels(&self, id: &str, add: &[&str], remove: &[&str]) -> Result<()> {
-        let url = format!("{}/users/me/messages/{}/modify", BASE_URL, urlencoding::encode(id));
-
+        let endpoint = format!("/users/me/messages/{}/modify", urlencoding::encode(id));
         let body = serde_json::json!({
             "addLabelIds": add,
             "removeLabelIds": remove
         });
-
-        let resp = self
-            .http
-            .post(&url)
-            .bearer_auth(&self.access_token)
-            .json(&body)
-            .send()
-            .await
-            .context("Failed to send request")?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            anyhow::bail!("HTTP {} - {}", status, body);
-        }
-
-        Ok(())
+        self.post_json(&endpoint, &body).await
     }
 
     pub async fn archive(&self, id: &str) -> Result<()> {
@@ -164,43 +182,11 @@ impl Client {
     }
 
     pub async fn trash(&self, id: &str) -> Result<()> {
-        let url = format!("{}/users/me/messages/{}/trash", BASE_URL, urlencoding::encode(id));
-
-        let resp = self
-            .http
-            .post(&url)
-            .bearer_auth(&self.access_token)
-            .send()
-            .await
-            .context("Failed to send request")?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            anyhow::bail!("HTTP {} - {}", status, body);
-        }
-
-        Ok(())
+        self.post(&format!("/users/me/messages/{}/trash", urlencoding::encode(id))).await
     }
 
     pub async fn unsubscribe(&self, id: &str) -> Result<()> {
-        let url = format!("{}/users/me/messages/{}/unsubscribe", BASE_URL, urlencoding::encode(id));
-
-        let resp = self
-            .http
-            .post(&url)
-            .bearer_auth(&self.access_token)
-            .send()
-            .await
-            .context("Failed to send request")?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            anyhow::bail!("HTTP {} - {}", status, body);
-        }
-
-        Ok(())
+        self.post(&format!("/users/me/messages/{}/unsubscribe", urlencoding::encode(id))).await
     }
 }
 
