@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 const BASE_URL: &str = "https://gmail.googleapis.com/gmail/v1";
 
+use std::time::Duration;
+
 pub struct Client {
     http: reqwest::Client,
     access_token: String,
@@ -68,7 +70,10 @@ pub struct Part {
 impl Client {
     pub fn new(access_token: &str) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()
+                .expect("Failed to build HTTP client"),
             access_token: access_token.to_string(),
         }
     }
