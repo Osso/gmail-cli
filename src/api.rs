@@ -39,6 +39,8 @@ pub struct Message {
     pub id: String,
     pub snippet: Option<String>,
     pub payload: Option<Payload>,
+    #[serde(rename = "labelIds")]
+    pub label_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -133,8 +135,54 @@ impl Client {
         Ok(())
     }
 
+    async fn post_json_with_response<T: Serialize, R: serde::de::DeserializeOwned>(
+        &self,
+        endpoint: &str,
+        body: &T,
+    ) -> Result<R> {
+        let url = format!("{}{}", BASE_URL, endpoint);
+
+        let resp = self
+            .http
+            .post(&url)
+            .bearer_auth(&self.access_token)
+            .json(body)
+            .send()
+            .await
+            .context("Failed to send request")?;
+
+        let resp = Self::check_response(resp).await?;
+        resp.json().await.context("Failed to parse JSON response")
+    }
+
     pub async fn list_labels(&self) -> Result<LabelList> {
         self.get("/users/me/labels").await
+    }
+
+    pub async fn create_label(&self, name: &str) -> Result<Label> {
+        // Capitalize first letter for consistency
+        let capitalized = capitalize_first(name);
+        let body = serde_json::json!({
+            "name": capitalized,
+            "labelListVisibility": "labelShow",
+            "messageListVisibility": "show"
+        });
+        self.post_json_with_response("/users/me/labels", &body).await
+    }
+
+    pub async fn get_or_create_label(&self, name: &str) -> Result<String> {
+        // Check if label already exists (case-insensitive, Gmail is case-insensitive)
+        let labels = self.list_labels().await?;
+        if let Some(existing) = labels.labels {
+            for label in existing {
+                if label.name.eq_ignore_ascii_case(name) {
+                    return Ok(label.id);
+                }
+            }
+        }
+        // Create new label
+        let label = self.create_label(name).await?;
+        Ok(label.id)
     }
 
     pub async fn list_messages(&self, query: Option<&str>, label: &str, max_results: u32) -> Result<MessageList> {
@@ -174,7 +222,13 @@ impl Client {
     }
 
     pub async fn add_label(&self, id: &str, label: &str) -> Result<()> {
-        self.modify_labels(id, &[label], &[]).await
+        // For custom labels, we need to get/create the label ID first
+        let label_id = if is_system_label(label) {
+            label.to_string()
+        } else {
+            self.get_or_create_label(label).await?
+        };
+        self.modify_labels(id, &[&label_id], &[]).await
     }
 
     pub async fn remove_label(&self, id: &str, label: &str) -> Result<()> {
@@ -238,6 +292,33 @@ fn find_text_part(parts: &[Part]) -> Option<String> {
     None
 }
 
+fn capitalize_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => c.to_uppercase().chain(chars).collect(),
+    }
+}
+
+fn is_system_label(label: &str) -> bool {
+    matches!(
+        label,
+        "INBOX"
+            | "SENT"
+            | "DRAFT"
+            | "TRASH"
+            | "SPAM"
+            | "STARRED"
+            | "IMPORTANT"
+            | "UNREAD"
+            | "CATEGORY_PERSONAL"
+            | "CATEGORY_SOCIAL"
+            | "CATEGORY_PROMOTIONS"
+            | "CATEGORY_UPDATES"
+            | "CATEGORY_FORUMS"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,6 +328,7 @@ mod tests {
             id: "test123".to_string(),
             snippet: Some("snippet".to_string()),
             payload,
+            label_ids: None,
         }
     }
 

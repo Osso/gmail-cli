@@ -3,6 +3,14 @@ name = "gmail"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "gmail"
+path = "src/lib.rs"
+
+[[bin]]
+name = "gmail"
+path = "src/main.rs"
+
 [dependencies]
 reqwest = { version = "0.12", features = ["json"] }
 oauth2 = "5"
