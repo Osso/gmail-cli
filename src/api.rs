@@ -81,7 +81,7 @@ impl Client {
     pub async fn list_messages(&self, query: Option<&str>, label: &str, max_results: u32) -> Result<MessageList> {
         let mut endpoint = format!("/users/me/messages?maxResults={}", max_results);
         if !label.is_empty() {
-            endpoint.push_str(&format!("&labelIds={}", label));
+            endpoint.push_str(&format!("&labelIds={}", urlencoding::encode(label)));
         }
         if let Some(q) = query {
             endpoint.push_str(&format!("&q={}", urlencoding::encode(q)));
@@ -90,11 +90,11 @@ impl Client {
     }
 
     pub async fn get_message(&self, id: &str) -> Result<Message> {
-        self.get(&format!("/users/me/messages/{}", id)).await
+        self.get(&format!("/users/me/messages/{}", urlencoding::encode(id))).await
     }
 
     pub async fn modify_labels(&self, id: &str, add: &[&str], remove: &[&str]) -> Result<()> {
-        let url = format!("https://gmail.googleapis.com/gmail/v1/users/me/messages/{}/modify", id);
+        let url = format!("https://gmail.googleapis.com/gmail/v1/users/me/messages/{}/modify", urlencoding::encode(id));
 
         let body = serde_json::json!({
             "addLabelIds": add,
@@ -140,7 +140,7 @@ impl Client {
     }
 
     pub async fn trash(&self, id: &str) -> Result<()> {
-        let url = format!("https://gmail.googleapis.com/gmail/v1/users/me/messages/{}/trash", id);
+        let url = format!("https://gmail.googleapis.com/gmail/v1/users/me/messages/{}/trash", urlencoding::encode(id));
 
         let resp = self
             .http
