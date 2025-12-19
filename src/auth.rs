@@ -12,7 +12,6 @@ use crate::config::{self, Tokens};
 
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
-const REDIRECT_PORT: u16 = 8085;
 
 fn create_http_client() -> reqwest::Client {
     reqwest::Client::builder()
@@ -22,14 +21,16 @@ fn create_http_client() -> reqwest::Client {
 }
 
 pub async fn login(client_id: &str, client_secret: &str) -> Result<Tokens> {
+    // Bind to port 0 to get an OS-assigned available port (prevents port squatting)
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .context("Failed to bind to local port")?;
+    let port = listener.local_addr()?.port();
+
     let client = BasicClient::new(ClientId::new(client_id.to_string()))
         .set_client_secret(ClientSecret::new(client_secret.to_string()))
         .set_auth_uri(AuthUrl::new(AUTH_URL.to_string())?)
         .set_token_uri(TokenUrl::new(TOKEN_URL.to_string())?)
-        .set_redirect_uri(RedirectUrl::new(format!(
-            "http://localhost:{}",
-            REDIRECT_PORT
-        ))?);
+        .set_redirect_uri(RedirectUrl::new(format!("http://localhost:{}", port))?);
 
     let http_client = create_http_client();
 
@@ -45,11 +46,11 @@ pub async fn login(client_id: &str, client_secret: &str) -> Result<Tokens> {
 
     println!("Opening browser for authentication...");
     let url = auth_url.to_string();
-    if let Err(_) = std::process::Command::new("vivaldi").arg(&url).spawn() {
+    if std::process::Command::new("vivaldi").arg(&url).spawn().is_err() {
         open::that(&url)?;
     }
 
-    let code = wait_for_callback(csrf_token)?;
+    let code = wait_for_callback(listener, csrf_token)?;
 
     let token_result = client
         .exchange_code(code)
@@ -70,11 +71,9 @@ pub async fn login(client_id: &str, client_secret: &str) -> Result<Tokens> {
     Ok(tokens)
 }
 
-fn wait_for_callback(expected_csrf: CsrfToken) -> Result<AuthorizationCode> {
-    let listener = TcpListener::bind(format!("127.0.0.1:{}", REDIRECT_PORT))
-        .context("Failed to bind to redirect port")?;
-
-    println!("Waiting for OAuth callback on port {}...", REDIRECT_PORT);
+fn wait_for_callback(listener: TcpListener, expected_csrf: CsrfToken) -> Result<AuthorizationCode> {
+    let port = listener.local_addr()?.port();
+    println!("Waiting for OAuth callback on port {}...", port);
 
     let (mut stream, _) = listener.accept()?;
     let mut reader = BufReader::new(&stream);
