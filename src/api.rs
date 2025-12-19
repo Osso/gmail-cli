@@ -2,6 +2,8 @@ use anyhow::{Context, Result};
 use base64::prelude::*;
 use serde::{Deserialize, Serialize};
 
+const BASE_URL: &str = "https://gmail.googleapis.com/gmail/v1";
+
 pub struct Client {
     http: reqwest::Client,
     access_token: String,
@@ -72,7 +74,7 @@ impl Client {
     }
 
     async fn get<T: serde::de::DeserializeOwned>(&self, endpoint: &str) -> Result<T> {
-        let url = format!("https://gmail.googleapis.com/gmail/v1{}", endpoint);
+        let url = format!("{}{}", BASE_URL, endpoint);
 
         let resp = self
             .http
@@ -111,7 +113,7 @@ impl Client {
     }
 
     pub async fn modify_labels(&self, id: &str, add: &[&str], remove: &[&str]) -> Result<()> {
-        let url = format!("https://gmail.googleapis.com/gmail/v1/users/me/messages/{}/modify", urlencoding::encode(id));
+        let url = format!("{}/users/me/messages/{}/modify", BASE_URL, urlencoding::encode(id));
 
         let body = serde_json::json!({
             "addLabelIds": add,
@@ -157,7 +159,7 @@ impl Client {
     }
 
     pub async fn trash(&self, id: &str) -> Result<()> {
-        let url = format!("https://gmail.googleapis.com/gmail/v1/users/me/messages/{}/trash", urlencoding::encode(id));
+        let url = format!("{}/users/me/messages/{}/trash", BASE_URL, urlencoding::encode(id));
 
         let resp = self
             .http
@@ -177,7 +179,7 @@ impl Client {
     }
 
     pub async fn unsubscribe(&self, id: &str) -> Result<()> {
-        let url = format!("https://gmail.googleapis.com/gmail/v1/users/me/messages/{}/unsubscribe", urlencoding::encode(id));
+        let url = format!("{}/users/me/messages/{}/unsubscribe", BASE_URL, urlencoding::encode(id));
 
         let resp = self
             .http
