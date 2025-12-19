@@ -264,32 +264,8 @@ async fn main() -> Result<()> {
         }
         Commands::Unsubscribe { id } => {
             let client = get_client().await?;
-            let msg = client.get_message(&id).await?;
-
-            if let Some(unsub) = msg.get_header("List-Unsubscribe") {
-                // Extract URL from header (format: <url> or <mailto:...>)
-                let url = unsub
-                    .split(',')
-                    .find_map(|part| {
-                        let trimmed = part.trim().trim_matches(|c| c == '<' || c == '>');
-                        if trimmed.starts_with("http") {
-                            Some(trimmed)
-                        } else {
-                            None
-                        }
-                    });
-
-                if let Some(url) = url {
-                    println!("Opening unsubscribe link...");
-                    if std::process::Command::new("vivaldi").arg(url).spawn().is_err() {
-                        open::that(url)?;
-                    }
-                } else {
-                    println!("No HTTP unsubscribe link found. Header: {}", unsub);
-                }
-            } else {
-                println!("No unsubscribe header found in this message");
-            }
+            client.unsubscribe(&id).await?;
+            println!("Unsubscribed from {}", id);
         }
     }
 

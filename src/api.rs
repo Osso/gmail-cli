@@ -175,6 +175,26 @@ impl Client {
 
         Ok(())
     }
+
+    pub async fn unsubscribe(&self, id: &str) -> Result<()> {
+        let url = format!("https://gmail.googleapis.com/gmail/v1/users/me/messages/{}/unsubscribe", urlencoding::encode(id));
+
+        let resp = self
+            .http
+            .post(&url)
+            .bearer_auth(&self.access_token)
+            .send()
+            .await
+            .context("Failed to send request")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("HTTP {} - {}", status, body);
+        }
+
+        Ok(())
+    }
 }
 
 impl Message {
