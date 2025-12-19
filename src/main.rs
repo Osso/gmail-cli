@@ -9,6 +9,10 @@ use clap::{Parser, Subcommand};
 #[command(name = "gmail")]
 #[command(about = "CLI tool to access Gmail API")]
 struct Cli {
+    /// Output as JSON
+    #[arg(long, global = true)]
+    json: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -168,24 +172,28 @@ async fn main() -> Result<()> {
             let labels = client.list_labels().await?;
 
             if let Some(labels) = labels.labels {
-                let mut system: Vec<_> = labels.iter()
-                    .filter(|l| l.label_type.as_deref() == Some("system"))
-                    .collect();
-                let mut user: Vec<_> = labels.iter()
-                    .filter(|l| l.label_type.as_deref() != Some("system"))
-                    .collect();
+                if cli.json {
+                    println!("{}", serde_json::to_string(&labels)?);
+                } else {
+                    let mut system: Vec<_> = labels.iter()
+                        .filter(|l| l.label_type.as_deref() == Some("system"))
+                        .collect();
+                    let mut user: Vec<_> = labels.iter()
+                        .filter(|l| l.label_type.as_deref() != Some("system"))
+                        .collect();
 
-                system.sort_by(|a, b| a.name.cmp(&b.name));
-                user.sort_by(|a, b| a.name.cmp(&b.name));
+                    system.sort_by(|a, b| a.name.cmp(&b.name));
+                    user.sort_by(|a, b| a.name.cmp(&b.name));
 
-                println!("System labels:");
-                for label in system {
-                    println!("  {} ({})", label.name, label.id);
-                }
-                if !user.is_empty() {
-                    println!("\nUser labels:");
-                    for label in user {
+                    println!("System labels:");
+                    for label in system {
                         println!("  {} ({})", label.name, label.id);
+                    }
+                    if !user.is_empty() {
+                        println!("\nUser labels:");
+                        for label in user {
+                            println!("  {} ({})", label.name, label.id);
+                        }
                     }
                 }
             }
@@ -204,30 +212,60 @@ async fn main() -> Result<()> {
             let list = client.list_messages(query.as_deref(), &label_id, max).await?;
 
             if let Some(messages) = list.messages {
-                for msg_ref in messages {
-                    let msg = client.get_message(&msg_ref.id).await?;
-                    let from = msg.get_header("From").unwrap_or("Unknown");
-                    let subject = msg.get_header("Subject").unwrap_or("(no subject)");
-                    println!("{} | {} | {}", msg.id, from, subject);
+                if cli.json {
+                    let mut items = Vec::new();
+                    for msg_ref in messages {
+                        let msg = client.get_message(&msg_ref.id).await?;
+                        items.push(serde_json::json!({
+                            "id": msg.id,
+                            "from": msg.get_header("From"),
+                            "to": msg.get_header("To"),
+                            "subject": msg.get_header("Subject"),
+                            "date": msg.get_header("Date"),
+                            "snippet": msg.snippet,
+                        }));
+                    }
+                    println!("{}", serde_json::to_string(&items)?);
+                } else {
+                    for msg_ref in messages {
+                        let msg = client.get_message(&msg_ref.id).await?;
+                        let from = msg.get_header("From").unwrap_or("Unknown");
+                        let subject = msg.get_header("Subject").unwrap_or("(no subject)");
+                        println!("{} | {} | {}", msg.id, from, subject);
+                    }
                 }
-            } else {
+            } else if !cli.json {
                 println!("No messages found.");
+            } else {
+                println!("[]");
             }
         }
         Commands::Read { id } => {
             let client = get_client().await?;
             let msg = client.get_message(&id).await?;
 
-            println!("From: {}", msg.get_header("From").unwrap_or("Unknown"));
-            println!("To: {}", msg.get_header("To").unwrap_or("Unknown"));
-            println!("Subject: {}", msg.get_header("Subject").unwrap_or("(no subject)"));
-            println!("Date: {}", msg.get_header("Date").unwrap_or("Unknown"));
-            println!("---");
+            if cli.json {
+                println!("{}", serde_json::to_string(&serde_json::json!({
+                    "id": msg.id,
+                    "from": msg.get_header("From"),
+                    "to": msg.get_header("To"),
+                    "subject": msg.get_header("Subject"),
+                    "date": msg.get_header("Date"),
+                    "body": msg.get_body_text(),
+                    "snippet": msg.snippet,
+                }))?);
+            } else {
+                println!("From: {}", msg.get_header("From").unwrap_or("Unknown"));
+                println!("To: {}", msg.get_header("To").unwrap_or("Unknown"));
+                println!("Subject: {}", msg.get_header("Subject").unwrap_or("(no subject)"));
+                println!("Date: {}", msg.get_header("Date").unwrap_or("Unknown"));
+                println!("---");
 
-            if let Some(body) = msg.get_body_text() {
-                println!("{}", body);
-            } else if let Some(snippet) = &msg.snippet {
-                println!("{}", snippet);
+                if let Some(body) = msg.get_body_text() {
+                    println!("{}", body);
+                } else if let Some(snippet) = &msg.snippet {
+                    println!("{}", snippet);
+                }
             }
         }
         Commands::Archive { id } => {

@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use base64::prelude::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 pub struct Client {
     http: reqwest::Client,
@@ -17,7 +17,7 @@ pub struct LabelList {
     pub labels: Option<Vec<Label>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Label {
     pub id: String,
     pub name: String,
