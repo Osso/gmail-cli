@@ -13,6 +13,19 @@ pub struct MessageList {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct LabelList {
+    pub labels: Option<Vec<Label>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Label {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub label_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct MessageRef {
     pub id: String,
 }
@@ -76,6 +89,10 @@ impl Client {
         }
 
         resp.json().await.context("Failed to parse JSON response")
+    }
+
+    pub async fn list_labels(&self) -> Result<LabelList> {
+        self.get("/users/me/labels").await
     }
 
     pub async fn list_messages(&self, query: Option<&str>, label: &str, max_results: u32) -> Result<MessageList> {

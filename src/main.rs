@@ -22,6 +22,8 @@ enum Commands {
     },
     /// Authenticate with Gmail (opens browser)
     Login,
+    /// List available labels
+    Labels,
     /// List messages
     List {
         /// Maximum number of messages to show
@@ -160,6 +162,33 @@ async fn main() -> Result<()> {
 
             auth::login(&client_id, &client_secret).await?;
             println!("Login successful! Tokens saved.");
+        }
+        Commands::Labels => {
+            let client = get_client().await?;
+            let labels = client.list_labels().await?;
+
+            if let Some(labels) = labels.labels {
+                let mut system: Vec<_> = labels.iter()
+                    .filter(|l| l.label_type.as_deref() == Some("system"))
+                    .collect();
+                let mut user: Vec<_> = labels.iter()
+                    .filter(|l| l.label_type.as_deref() != Some("system"))
+                    .collect();
+
+                system.sort_by(|a, b| a.name.cmp(&b.name));
+                user.sort_by(|a, b| a.name.cmp(&b.name));
+
+                println!("System labels:");
+                for label in system {
+                    println!("  {} ({})", label.name, label.id);
+                }
+                if !user.is_empty() {
+                    println!("\nUser labels:");
+                    for label in user {
+                        println!("  {} ({})", label.name, label.id);
+                    }
+                }
+            }
         }
         Commands::List { max, query, label, unread } => {
             let client = get_client().await?;
