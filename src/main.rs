@@ -83,6 +83,26 @@ enum Commands {
     },
 }
 
+fn normalize_label(label: &str) -> String {
+    match label.to_lowercase().as_str() {
+        "inbox" => "INBOX".to_string(),
+        "sent" => "SENT".to_string(),
+        "trash" => "TRASH".to_string(),
+        "spam" => "SPAM".to_string(),
+        "starred" => "STARRED".to_string(),
+        "unread" => "UNREAD".to_string(),
+        "important" => "IMPORTANT".to_string(),
+        "drafts" | "draft" => "DRAFT".to_string(),
+        "all" => "".to_string(),
+        "primary" => "CATEGORY_PERSONAL".to_string(),
+        "social" => "CATEGORY_SOCIAL".to_string(),
+        "promotions" => "CATEGORY_PROMOTIONS".to_string(),
+        "updates" => "CATEGORY_UPDATES".to_string(),
+        "forums" => "CATEGORY_FORUMS".to_string(),
+        other => other.to_uppercase(),
+    }
+}
+
 async fn get_client() -> Result<api::Client> {
     let cfg = config::load_config()?;
     let client_id = cfg.client_id.ok_or_else(|| {
@@ -143,17 +163,7 @@ async fn main() -> Result<()> {
         }
         Commands::List { max, query, label, unread } => {
             let client = get_client().await?;
-            let label_lower = label.to_lowercase();
-            let label_id = match label_lower.as_str() {
-                "inbox" => "INBOX",
-                "sent" => "SENT",
-                "trash" => "TRASH",
-                "spam" => "SPAM",
-                "starred" => "STARRED",
-                "drafts" => "DRAFT",
-                "all" => "",
-                _ => &label_lower,
-            };
+            let label_id = normalize_label(&label);
             let query = if unread {
                 Some(match query {
                     Some(q) => format!("is:unread {}", q),
@@ -162,7 +172,7 @@ async fn main() -> Result<()> {
             } else {
                 query
             };
-            let list = client.list_messages(query.as_deref(), label_id, max).await?;
+            let list = client.list_messages(query.as_deref(), &label_id, max).await?;
 
             if let Some(messages) = list.messages {
                 for msg_ref in messages {
@@ -208,12 +218,14 @@ async fn main() -> Result<()> {
         }
         Commands::Label { id, label } => {
             let client = get_client().await?;
-            client.add_label(&id, &label.to_uppercase()).await?;
+            let label_id = normalize_label(&label);
+            client.add_label(&id, &label_id).await?;
             println!("Added label {} to {}", label, id);
         }
         Commands::Unlabel { id, label } => {
             let client = get_client().await?;
-            client.remove_label(&id, &label.to_uppercase()).await?;
+            let label_id = normalize_label(&label);
+            client.remove_label(&id, &label_id).await?;
             println!("Removed label {} from {}", label, id);
         }
         Commands::Delete { id } => {
