@@ -1,14 +1,16 @@
 use anyhow::{Context, Result};
 use base64::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 const BASE_URL: &str = "https://gmail.googleapis.com/gmail/v1";
-
-use std::time::Duration;
+const MIN_REQUEST_INTERVAL: Duration = Duration::from_millis(100);
 
 pub struct Client {
     http: reqwest::Client,
     access_token: String,
+    last_request: Mutex<Option<Instant>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -77,6 +79,22 @@ impl Client {
                 .build()
                 .expect("Failed to build HTTP client"),
             access_token: access_token.to_string(),
+            last_request: Mutex::new(None),
+        }
+    }
+
+    async fn rate_limit(&self) {
+        let wait_duration = {
+            let mut last = self.last_request.lock().unwrap();
+            let now = Instant::now();
+            let wait = last
+                .map(|t| MIN_REQUEST_INTERVAL.saturating_sub(now.duration_since(t)))
+                .unwrap_or(Duration::ZERO);
+            *last = Some(now + wait);
+            wait
+        };
+        if !wait_duration.is_zero() {
+            tokio::time::sleep(wait_duration).await;
         }
     }
 
@@ -90,6 +108,7 @@ impl Client {
     }
 
     async fn get<T: serde::de::DeserializeOwned>(&self, endpoint: &str) -> Result<T> {
+        self.rate_limit().await;
         let url = format!("{}{}", BASE_URL, endpoint);
 
         let resp = self
@@ -105,12 +124,14 @@ impl Client {
     }
 
     async fn post(&self, endpoint: &str) -> Result<()> {
+        self.rate_limit().await;
         let url = format!("{}{}", BASE_URL, endpoint);
 
         let resp = self
             .http
             .post(&url)
             .bearer_auth(&self.access_token)
+            .header("Content-Length", "0")
             .send()
             .await
             .context("Failed to send request")?;
@@ -120,6 +141,7 @@ impl Client {
     }
 
     async fn post_json<T: Serialize>(&self, endpoint: &str, body: &T) -> Result<()> {
+        self.rate_limit().await;
         let url = format!("{}{}", BASE_URL, endpoint);
 
         let resp = self
@@ -140,6 +162,7 @@ impl Client {
         endpoint: &str,
         body: &T,
     ) -> Result<R> {
+        self.rate_limit().await;
         let url = format!("{}{}", BASE_URL, endpoint);
 
         let resp = self

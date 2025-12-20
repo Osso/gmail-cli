@@ -2,19 +2,23 @@ use anyhow::{Context, Result};
 use oauth2::basic::BasicClient;
 use oauth2::{
     AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge,
-    RedirectUrl, RefreshToken, Scope, TokenResponse, TokenUrl,
+    PkceCodeVerifier, RedirectUrl, RefreshToken, Scope, TokenResponse, TokenUrl,
 };
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
+use std::time::Duration;
 use url::Url;
 
 use crate::config::{self, Tokens};
 
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
+const MAX_RETRIES: u32 = 3;
 
 fn create_http_client() -> reqwest::Client {
     reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .connect_timeout(Duration::from_secs(10))
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .expect("Client should build")
@@ -35,6 +39,7 @@ pub async fn login(client_id: &str, client_secret: &str) -> Result<Tokens> {
     let http_client = create_http_client();
 
     let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
+    let pkce_secret = pkce_verifier.secret().to_string();
 
     let (auth_url, csrf_token) = client
         .authorize_url(CsrfToken::new_random)
@@ -45,19 +50,46 @@ pub async fn login(client_id: &str, client_secret: &str) -> Result<Tokens> {
         .url();
 
     println!("Opening browser for authentication...");
-    let url = auth_url.to_string();
-    if std::process::Command::new("vivaldi").arg(&url).spawn().is_err() {
-        open::that(&url)?;
-    }
+    open::that(auth_url.as_str())?;
 
     let code = wait_for_callback(listener, csrf_token)?;
 
-    let token_result = client
-        .exchange_code(code)
-        .set_pkce_verifier(pkce_verifier)
-        .request_async(&http_client)
-        .await
-        .context("Failed to exchange code for token")?;
+    let mut last_error = None;
+    let mut token_result = None;
+
+    for attempt in 0..MAX_RETRIES {
+        if attempt > 0 {
+            let delay = Duration::from_secs(1 << attempt);
+            eprintln!("Retrying in {:?}...", delay);
+            tokio::time::sleep(delay).await;
+        }
+
+        let verifier = PkceCodeVerifier::new(pkce_secret.clone());
+        match client
+            .exchange_code(code.clone())
+            .set_pkce_verifier(verifier)
+            .request_async(&http_client)
+            .await
+        {
+            Ok(result) => {
+                token_result = Some(result);
+                break;
+            }
+            Err(e) => {
+                let err_str = format!("{:?}", e);
+                if err_str.contains("timed out") || err_str.contains("Timeout") {
+                    eprintln!("Token exchange timed out (attempt {}/{})", attempt + 1, MAX_RETRIES);
+                    last_error = Some(e);
+                } else {
+                    return Err(e).context("Failed to exchange code for token");
+                }
+            }
+        }
+    }
+
+    let token_result = token_result
+        .ok_or_else(|| last_error.unwrap())
+        .context("Failed to exchange code for token after retries")?;
 
     let tokens = Tokens {
         access_token: token_result.access_token().secret().to_string(),
@@ -117,11 +149,40 @@ pub async fn refresh_token(client_id: &str, client_secret: &str, refresh: &str) 
 
     let http_client = create_http_client();
 
-    let token_result = client
-        .exchange_refresh_token(&RefreshToken::new(refresh.to_string()))
-        .request_async(&http_client)
-        .await
-        .context("Failed to refresh token")?;
+    let mut last_error = None;
+    let mut token_result = None;
+
+    for attempt in 0..MAX_RETRIES {
+        if attempt > 0 {
+            let delay = Duration::from_secs(1 << attempt);
+            eprintln!("Retrying in {:?}...", delay);
+            tokio::time::sleep(delay).await;
+        }
+
+        match client
+            .exchange_refresh_token(&RefreshToken::new(refresh.to_string()))
+            .request_async(&http_client)
+            .await
+        {
+            Ok(result) => {
+                token_result = Some(result);
+                break;
+            }
+            Err(e) => {
+                let err_str = format!("{:?}", e);
+                if err_str.contains("timed out") || err_str.contains("Timeout") {
+                    eprintln!("Token refresh timed out (attempt {}/{})", attempt + 1, MAX_RETRIES);
+                    last_error = Some(e);
+                } else {
+                    return Err(e).context("Failed to refresh token");
+                }
+            }
+        }
+    }
+
+    let token_result = token_result
+        .ok_or_else(|| last_error.unwrap())
+        .context("Failed to refresh token after retries")?;
 
     let tokens = Tokens {
         access_token: token_result.access_token().secret().to_string(),
