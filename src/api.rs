@@ -232,7 +232,25 @@ impl Client {
     }
 
     pub async fn remove_label(&self, id: &str, label: &str) -> Result<()> {
-        self.modify_labels(id, &[], &[label]).await
+        // For custom labels, we need to find the label ID first
+        let label_id = if is_system_label(label) {
+            label.to_string()
+        } else {
+            self.find_label(label).await?.ok_or_else(|| anyhow::anyhow!("Label not found: {}", label))?
+        };
+        self.modify_labels(id, &[], &[&label_id]).await
+    }
+
+    async fn find_label(&self, name: &str) -> Result<Option<String>> {
+        let labels = self.list_labels().await?;
+        if let Some(label_list) = labels.labels {
+            for label in label_list {
+                if label.name.eq_ignore_ascii_case(name) {
+                    return Ok(Some(label.id));
+                }
+            }
+        }
+        Ok(None)
     }
 
     pub async fn trash(&self, id: &str) -> Result<()> {

@@ -105,7 +105,7 @@ fn normalize_label(label: &str) -> String {
         "promotions" => "CATEGORY_PROMOTIONS".to_string(),
         "updates" => "CATEGORY_UPDATES".to_string(),
         "forums" => "CATEGORY_FORUMS".to_string(),
-        other => other.to_uppercase(),
+        other => other.to_string(), // Keep custom labels as-is
     }
 }
 
