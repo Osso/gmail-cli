@@ -244,6 +244,28 @@ impl Client {
         self.modify_labels(id, &["INBOX"], &["SPAM"]).await
     }
 
+    pub async fn mark_read(&self, id: &str) -> Result<()> {
+        self.modify_labels(id, &[], &["UNREAD"]).await
+    }
+
+    pub async fn mark_unread(&self, id: &str) -> Result<()> {
+        self.modify_labels(id, &["UNREAD"], &[]).await
+    }
+
+    pub async fn clear_labels(&self, id: &str) -> Result<Vec<String>> {
+        let msg = self.get_message(id).await?;
+        let labels = msg.label_ids.unwrap_or_default();
+        let user_labels: Vec<&str> = labels
+            .iter()
+            .filter(|l| !is_system_label(l))
+            .map(|s| s.as_str())
+            .collect();
+        if !user_labels.is_empty() {
+            self.modify_labels(id, &[], &user_labels).await?;
+        }
+        Ok(user_labels.into_iter().map(|s| s.to_string()).collect())
+    }
+
     pub async fn add_label(&self, id: &str, label: &str) -> Result<()> {
         // For custom labels, we need to get/create the label ID first
         let label_id = if is_system_label(label) {

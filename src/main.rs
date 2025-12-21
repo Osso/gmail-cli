@@ -19,9 +19,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Set OAuth client credentials (from Google Cloud Console)
+    /// Set custom OAuth client ID (optional - has built-in default)
     Config {
-        /// Client ID
+        /// Client ID (from Google Cloud Console)
         client_id: String,
     },
     /// Authenticate with Gmail (opens browser)
@@ -82,6 +82,24 @@ enum Commands {
         /// Message ID
         id: String,
     },
+    /// Mark a message as read
+    #[command(name = "mark-read")]
+    MarkRead {
+        /// Message ID
+        id: String,
+    },
+    /// Mark a message as unread
+    #[command(name = "mark-unread")]
+    MarkUnread {
+        /// Message ID
+        id: String,
+    },
+    /// Remove all user labels from a message
+    #[command(name = "clear-labels")]
+    ClearLabels {
+        /// Message ID
+        id: String,
+    },
     /// Unsubscribe from a mailing list (opens unsubscribe link)
     Unsubscribe {
         /// Message ID
@@ -111,12 +129,8 @@ fn normalize_label(label: &str) -> String {
 
 async fn get_client() -> Result<api::Client> {
     let cfg = config::load_config()?;
-    let client_id = cfg.client_id.ok_or_else(|| {
-        anyhow::anyhow!("Not configured. Run 'gmail config <client-id>' first")
-    })?;
-    let client_secret = cfg.client_secret.ok_or_else(|| {
-        anyhow::anyhow!("Not configured. Run 'gmail config <client-id>' first")
-    })?;
+    let client_id = cfg.client_id();
+    let client_secret = cfg.client_secret();
 
     let tokens = match config::load_tokens() {
         Ok(t) => t,
@@ -131,7 +145,7 @@ async fn get_client() -> Result<api::Client> {
         Ok(_) => Ok(client),
         Err(_) => {
             // Token expired, try refresh
-            let new_tokens = auth::refresh_token(&client_id, &client_secret, &tokens.refresh_token).await?;
+            let new_tokens = auth::refresh_token(client_id, client_secret, &tokens.refresh_token).await?;
             Ok(api::Client::new(&new_tokens.access_token))
         }
     }
@@ -143,28 +157,19 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Config { client_id } => {
-            let secret = rpassword::prompt_password("Client Secret: ")?;
-            if secret.is_empty() {
-                anyhow::bail!("Client secret cannot be empty");
-            }
-
             let cfg = config::Config {
                 client_id: Some(client_id),
-                client_secret: Some(secret),
+                client_secret: None,
             };
             config::save_config(&cfg)?;
-            println!("Credentials saved to {:?}", config::config_dir());
+            println!("Custom client ID saved to {:?}", config::config_dir());
         }
         Commands::Login => {
             let cfg = config::load_config()?;
-            let client_id = cfg.client_id.ok_or_else(|| {
-                anyhow::anyhow!("Not configured. Run 'gmail config <client-id>' first")
-            })?;
-            let client_secret = cfg.client_secret.ok_or_else(|| {
-                anyhow::anyhow!("Not configured. Run 'gmail config <client-id>' first")
-            })?;
+            let client_id = cfg.client_id();
+            let client_secret = cfg.client_secret();
 
-            auth::login(&client_id, &client_secret).await?;
+            auth::login(client_id, client_secret).await?;
             println!("Login successful! Tokens saved.");
         }
         Commands::Labels => {
@@ -301,6 +306,25 @@ async fn main() -> Result<()> {
             let client = get_client().await?;
             client.trash(&id).await?;
             println!("Moved to trash {}", id);
+        }
+        Commands::MarkRead { id } => {
+            let client = get_client().await?;
+            client.mark_read(&id).await?;
+            println!("Marked as read {}", id);
+        }
+        Commands::MarkUnread { id } => {
+            let client = get_client().await?;
+            client.mark_unread(&id).await?;
+            println!("Marked as unread {}", id);
+        }
+        Commands::ClearLabels { id } => {
+            let client = get_client().await?;
+            let removed = client.clear_labels(&id).await?;
+            if removed.is_empty() {
+                println!("No user labels to remove from {}", id);
+            } else {
+                println!("Removed {} labels from {}", removed.len(), id);
+            }
         }
         Commands::Unsubscribe { id } => {
             let client = get_client().await?;
