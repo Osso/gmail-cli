@@ -190,7 +190,8 @@ impl Client {
             "labelListVisibility": "labelShow",
             "messageListVisibility": "show"
         });
-        self.post_json_with_response("/users/me/labels", &body).await
+        self.post_json_with_response("/users/me/labels", &body)
+            .await
     }
 
     pub async fn get_or_create_label(&self, name: &str) -> Result<String> {
@@ -208,7 +209,12 @@ impl Client {
         Ok(label.id)
     }
 
-    pub async fn list_messages(&self, query: Option<&str>, label: &str, max_results: u32) -> Result<MessageList> {
+    pub async fn list_messages(
+        &self,
+        query: Option<&str>,
+        label: &str,
+        max_results: u32,
+    ) -> Result<MessageList> {
         let mut endpoint = format!("/users/me/messages?maxResults={}", max_results);
         if !label.is_empty() {
             endpoint.push_str(&format!("&labelIds={}", urlencoding::encode(label)));
@@ -220,7 +226,8 @@ impl Client {
     }
 
     pub async fn get_message(&self, id: &str) -> Result<Message> {
-        self.get(&format!("/users/me/messages/{}", urlencoding::encode(id))).await
+        self.get(&format!("/users/me/messages/{}", urlencoding::encode(id)))
+            .await
     }
 
     pub async fn modify_labels(&self, id: &str, add: &[&str], remove: &[&str]) -> Result<()> {
@@ -281,7 +288,9 @@ impl Client {
         let label_id = if is_system_label(label) {
             label.to_string()
         } else {
-            self.find_label(label).await?.ok_or_else(|| anyhow::anyhow!("Label not found: {}", label))?
+            self.find_label(label)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("Label not found: {}", label))?
         };
         self.modify_labels(id, &[], &[&label_id]).await
     }
@@ -299,17 +308,29 @@ impl Client {
     }
 
     pub async fn trash(&self, id: &str) -> Result<()> {
-        self.post(&format!("/users/me/messages/{}/trash", urlencoding::encode(id))).await
+        self.post(&format!(
+            "/users/me/messages/{}/trash",
+            urlencoding::encode(id)
+        ))
+        .await
     }
 
     pub async fn unsubscribe(&self, id: &str) -> Result<()> {
-        self.post(&format!("/users/me/messages/{}/unsubscribe", urlencoding::encode(id))).await
+        self.post(&format!(
+            "/users/me/messages/{}/unsubscribe",
+            urlencoding::encode(id)
+        ))
+        .await
     }
 }
 
 impl Message {
     pub fn get_header(&self, name: &str) -> Option<&str> {
-        self.payload.as_ref()?.headers.as_ref()?.iter()
+        self.payload
+            .as_ref()?
+            .headers
+            .as_ref()?
+            .iter()
             .find(|h| h.name.eq_ignore_ascii_case(name))
             .map(|h| h.value.as_str())
     }
@@ -405,8 +426,14 @@ mod tests {
     fn test_get_header() {
         let msg = make_message(Some(Payload {
             headers: Some(vec![
-                Header { name: "From".to_string(), value: "test@example.com".to_string() },
-                Header { name: "Subject".to_string(), value: "Hello".to_string() },
+                Header {
+                    name: "From".to_string(),
+                    value: "test@example.com".to_string(),
+                },
+                Header {
+                    name: "Subject".to_string(),
+                    value: "Hello".to_string(),
+                },
             ]),
             body: None,
             parts: None,

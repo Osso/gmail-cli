@@ -145,7 +145,8 @@ async fn get_client() -> Result<api::Client> {
         Ok(_) => Ok(client),
         Err(_) => {
             // Token expired, try refresh
-            let new_tokens = auth::refresh_token(client_id, client_secret, &tokens.refresh_token).await?;
+            let new_tokens =
+                auth::refresh_token(client_id, client_secret, &tokens.refresh_token).await?;
             Ok(api::Client::new(&new_tokens.access_token))
         }
     }
@@ -180,10 +181,12 @@ async fn main() -> Result<()> {
                 if cli.json {
                     println!("{}", serde_json::to_string(&labels)?);
                 } else {
-                    let mut system: Vec<_> = labels.iter()
+                    let mut system: Vec<_> = labels
+                        .iter()
                         .filter(|l| l.label_type.as_deref() == Some("system"))
                         .collect();
-                    let mut user: Vec<_> = labels.iter()
+                    let mut user: Vec<_> = labels
+                        .iter()
                         .filter(|l| l.label_type.as_deref() != Some("system"))
                         .collect();
 
@@ -203,7 +206,12 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::List { max, query, label, unread } => {
+        Commands::List {
+            max,
+            query,
+            label,
+            unread,
+        } => {
             let client = get_client().await?;
             let label_id = normalize_label(&label);
             let query = if unread {
@@ -214,7 +222,9 @@ async fn main() -> Result<()> {
             } else {
                 query
             };
-            let list = client.list_messages(query.as_deref(), &label_id, max).await?;
+            let list = client
+                .list_messages(query.as_deref(), &label_id, max)
+                .await?;
 
             if let Some(messages) = list.messages {
                 if cli.json {
@@ -250,19 +260,25 @@ async fn main() -> Result<()> {
             let msg = client.get_message(&id).await?;
 
             if cli.json {
-                println!("{}", serde_json::to_string(&serde_json::json!({
-                    "id": msg.id,
-                    "from": msg.get_header("From"),
-                    "to": msg.get_header("To"),
-                    "subject": msg.get_header("Subject"),
-                    "date": msg.get_header("Date"),
-                    "body": msg.get_body_text(),
-                    "snippet": msg.snippet,
-                }))?);
+                println!(
+                    "{}",
+                    serde_json::to_string(&serde_json::json!({
+                        "id": msg.id,
+                        "from": msg.get_header("From"),
+                        "to": msg.get_header("To"),
+                        "subject": msg.get_header("Subject"),
+                        "date": msg.get_header("Date"),
+                        "body": msg.get_body_text(),
+                        "snippet": msg.snippet,
+                    }))?
+                );
             } else {
                 println!("From: {}", msg.get_header("From").unwrap_or("Unknown"));
                 println!("To: {}", msg.get_header("To").unwrap_or("Unknown"));
-                println!("Subject: {}", msg.get_header("Subject").unwrap_or("(no subject)"));
+                println!(
+                    "Subject: {}",
+                    msg.get_header("Subject").unwrap_or("(no subject)")
+                );
                 println!("Date: {}", msg.get_header("Date").unwrap_or("Unknown"));
                 println!("---");
 

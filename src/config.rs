@@ -7,7 +7,8 @@ use std::path::PathBuf;
 
 // Default OAuth credentials for gmail-cli
 // These are safe to embed in version control (public OAuth client)
-pub const DEFAULT_CLIENT_ID: &str = "690797697044-6kpkd2ethnsren8m5v27qdkj2182eb4n.apps.googleusercontent.com";
+pub const DEFAULT_CLIENT_ID: &str =
+    "690797697044-6kpkd2ethnsren8m5v27qdkj2182eb4n.apps.googleusercontent.com";
 pub const DEFAULT_CLIENT_SECRET: &str = "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";
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -21,7 +22,9 @@ impl Config {
         self.client_id.as_deref().unwrap_or(DEFAULT_CLIENT_ID)
     }
     pub fn client_secret(&self) -> &str {
-        self.client_secret.as_deref().unwrap_or(DEFAULT_CLIENT_SECRET)
+        self.client_secret
+            .as_deref()
+            .unwrap_or(DEFAULT_CLIENT_SECRET)
     }
 }
 

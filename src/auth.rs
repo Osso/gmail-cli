@@ -26,8 +26,7 @@ fn create_http_client() -> reqwest::Client {
 
 pub async fn login(client_id: &str, client_secret: &str) -> Result<Tokens> {
     // Bind to port 0 to get an OS-assigned available port (prevents port squatting)
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .context("Failed to bind to local port")?;
+    let listener = TcpListener::bind("127.0.0.1:0").context("Failed to bind to local port")?;
     let port = listener.local_addr()?.port();
 
     let client = BasicClient::new(ClientId::new(client_id.to_string()))
@@ -78,7 +77,11 @@ pub async fn login(client_id: &str, client_secret: &str) -> Result<Tokens> {
             Err(e) => {
                 let err_str = format!("{:?}", e);
                 if err_str.contains("timed out") || err_str.contains("Timeout") {
-                    eprintln!("Token exchange timed out (attempt {}/{})", attempt + 1, MAX_RETRIES);
+                    eprintln!(
+                        "Token exchange timed out (attempt {}/{})",
+                        attempt + 1,
+                        MAX_RETRIES
+                    );
                     last_error = Some(e);
                 } else {
                     return Err(e).context("Failed to exchange code for token");
@@ -171,7 +174,11 @@ pub async fn refresh_token(client_id: &str, client_secret: &str, refresh: &str) 
             Err(e) => {
                 let err_str = format!("{:?}", e);
                 if err_str.contains("timed out") || err_str.contains("Timeout") {
-                    eprintln!("Token refresh timed out (attempt {}/{})", attempt + 1, MAX_RETRIES);
+                    eprintln!(
+                        "Token refresh timed out (attempt {}/{})",
+                        attempt + 1,
+                        MAX_RETRIES
+                    );
                     last_error = Some(e);
                 } else {
                     return Err(e).context("Failed to refresh token");
