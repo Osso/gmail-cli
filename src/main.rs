@@ -47,6 +47,9 @@ enum Commands {
     Read {
         /// Message ID
         id: String,
+        /// Show raw HTML instead of text
+        #[arg(long)]
+        html: bool,
     },
     /// Archive a message (remove from inbox)
     Archive {
@@ -79,6 +82,11 @@ enum Commands {
     },
     /// Move a message to trash
     Delete {
+        /// Message ID
+        id: String,
+    },
+    /// Restore a message from trash
+    Undelete {
         /// Message ID
         id: String,
     },
@@ -255,11 +263,18 @@ async fn main() -> Result<()> {
                 println!("[]");
             }
         }
-        Commands::Read { id } => {
+        Commands::Read { id, html } => {
             let client = get_client().await?;
             let msg = client.get_message(&id).await?;
 
-            if cli.json {
+            if html {
+                // Show raw HTML
+                if let Some(html_body) = msg.get_body_html() {
+                    println!("{}", html_body);
+                } else {
+                    eprintln!("No HTML body found");
+                }
+            } else if cli.json {
                 println!(
                     "{}",
                     serde_json::to_string(&serde_json::json!({
@@ -270,6 +285,11 @@ async fn main() -> Result<()> {
                         "date": msg.get_header("Date"),
                         "body": msg.get_body_text(),
                         "snippet": msg.snippet,
+                        "list_unsubscribe": msg.get_header("List-Unsubscribe"),
+                        "list_unsubscribe_post": msg.get_header("List-Unsubscribe-Post"),
+                        "authentication_results": msg.get_header("Authentication-Results"),
+                        "dkim_signature": msg.get_header("DKIM-Signature"),
+                        "received_spf": msg.get_header("Received-SPF"),
                     }))?
                 );
             } else {
@@ -322,6 +342,11 @@ async fn main() -> Result<()> {
             let client = get_client().await?;
             client.trash(&id).await?;
             println!("Moved to trash {}", id);
+        }
+        Commands::Undelete { id } => {
+            let client = get_client().await?;
+            client.untrash(&id).await?;
+            println!("Restored from trash {}", id);
         }
         Commands::MarkRead { id } => {
             let client = get_client().await?;

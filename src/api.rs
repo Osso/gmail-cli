@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use base64::prelude::*;
+use base64::prelude::*; // Used by tests
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -315,6 +315,14 @@ impl Client {
         .await
     }
 
+    pub async fn untrash(&self, id: &str) -> Result<()> {
+        self.post(&format!(
+            "/users/me/messages/{}/untrash",
+            urlencoding::encode(id)
+        ))
+        .await
+    }
+
     pub async fn unsubscribe(&self, id: &str) -> Result<()> {
         self.post(&format!(
             "/users/me/messages/{}/unsubscribe",
@@ -341,39 +349,151 @@ impl Message {
         // Try direct body first
         if let Some(body) = &payload.body {
             if let Some(data) = &body.data {
-                if let Ok(decoded) = BASE64_URL_SAFE_NO_PAD.decode(data) {
+                if let Some(decoded) = decode_base64(data) {
                     return String::from_utf8(decoded).ok();
+                }
+            }
+        }
+
+        // Try parts - prefer text/plain, fallback to text/html
+        if let Some(parts) = &payload.parts {
+            if let Some(text) = find_text_part(parts, "text/plain") {
+                return Some(text);
+            }
+            if let Some(html) = find_text_part(parts, "text/html") {
+                return Some(html_to_text(&html));
+            }
+        }
+
+        None
+    }
+
+    pub fn get_body_html(&self) -> Option<String> {
+        let payload = self.payload.as_ref()?;
+
+        // Try direct body first (might be HTML for simple HTML-only emails)
+        if let Some(body) = &payload.body {
+            if let Some(data) = &body.data {
+                if let Some(decoded) = decode_base64(data) {
+                    if let Ok(text) = String::from_utf8(decoded) {
+                        if text.contains("<html") || text.contains("<body") || text.contains("<div")
+                        {
+                            return Some(text);
+                        }
+                    }
                 }
             }
         }
 
         // Try parts
         if let Some(parts) = &payload.parts {
-            return find_text_part(parts);
+            return find_text_part(parts, "text/html");
         }
 
         None
     }
 }
 
-fn find_text_part(parts: &[Part]) -> Option<String> {
+fn find_text_part(parts: &[Part], mime_type: &str) -> Option<String> {
     for part in parts {
-        if part.mime_type == "text/plain" {
+        if part.mime_type == mime_type {
             if let Some(body) = &part.body {
                 if let Some(data) = &body.data {
-                    if let Ok(decoded) = BASE64_URL_SAFE_NO_PAD.decode(data) {
+                    if let Some(decoded) = decode_base64(data) {
                         return String::from_utf8(decoded).ok();
                     }
                 }
             }
         }
         if let Some(nested) = &part.parts {
-            if let Some(text) = find_text_part(nested) {
+            if let Some(text) = find_text_part(nested, mime_type) {
                 return Some(text);
             }
         }
     }
     None
+}
+
+fn decode_base64(data: &str) -> Option<Vec<u8>> {
+    use base64::Engine;
+    use base64::engine::general_purpose::{STANDARD, URL_SAFE, URL_SAFE_NO_PAD};
+
+    // Try URL-safe without padding first (Gmail's format)
+    if let Ok(decoded) = URL_SAFE_NO_PAD.decode(data) {
+        return Some(decoded);
+    }
+
+    // Try URL-safe with padding
+    if let Ok(decoded) = URL_SAFE.decode(data) {
+        return Some(decoded);
+    }
+
+    // Try standard base64
+    if let Ok(decoded) = STANDARD.decode(data) {
+        return Some(decoded);
+    }
+
+    // Try with manually added padding
+    let padded = match data.len() % 4 {
+        2 => format!("{}==", data),
+        3 => format!("{}=", data),
+        _ => data.to_string(),
+    };
+    URL_SAFE.decode(&padded).ok()
+}
+
+fn html_to_text(html: &str) -> String {
+    use regex::Regex;
+
+    let mut text = html.to_string();
+
+    // Convert links to markdown format
+    let link_re = Regex::new(r#"<a[^>]*href="([^"]*)"[^>]*>([^<]*)</a>"#).unwrap();
+    text = link_re.replace_all(&text, "[$2]($1)").to_string();
+
+    // Convert images to markdown format
+    let img_re = Regex::new(r#"<img[^>]*alt="([^"]*)"[^>]*/?\s*>"#).unwrap();
+    text = img_re.replace_all(&text, "[$1]").to_string();
+
+    // Remove remaining img tags without alt
+    let img_no_alt_re = Regex::new(r#"<img[^>]*/?\s*>"#).unwrap();
+    text = img_no_alt_re.replace_all(&text, "").to_string();
+
+    // Convert line breaks
+    text = text
+        .replace("<br>", "\n")
+        .replace("<br/>", "\n")
+        .replace("<br />", "\n");
+
+    // Convert paragraph and div breaks
+    let block_re = Regex::new(r"</?(p|div|tr|table|td|th|li|ul|ol|h[1-6])[^>]*>").unwrap();
+    text = block_re.replace_all(&text, "\n").to_string();
+
+    // Remove all remaining HTML tags
+    let tag_re = Regex::new(r"<[^>]+>").unwrap();
+    text = tag_re.replace_all(&text, "").to_string();
+
+    // Decode common HTML entities
+    text = text
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&copy;", "©");
+
+    // Collapse multiple newlines
+    let newlines_re = Regex::new(r"\n{3,}").unwrap();
+    text = newlines_re.replace_all(&text, "\n\n").to_string();
+
+    // Trim whitespace from lines and overall
+    text.lines()
+        .map(|l| l.trim())
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
 }
 
 fn capitalize_first(s: &str) -> String {
