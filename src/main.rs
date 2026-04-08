@@ -214,7 +214,13 @@ async fn cmd_labels(json: bool) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_list(max: u32, query: Option<String>, label: String, unread: bool, json: bool) -> Result<()> {
+async fn cmd_list(
+    max: u32,
+    query: Option<String>,
+    label: String,
+    unread: bool,
+    json: bool,
+) -> Result<()> {
     let client = get_client().await?;
     let label_id = normalize_label(&label);
     let query = if unread {
@@ -399,7 +405,12 @@ async fn main() -> Result<()> {
         Commands::Config { client_id } => cmd_config(client_id).await?,
         Commands::Login => cmd_login().await?,
         Commands::Labels => cmd_labels(cli.json).await?,
-        Commands::List { max, query, label, unread } => cmd_list(max, query, label, unread, cli.json).await?,
+        Commands::List {
+            max,
+            query,
+            label,
+            unread,
+        } => cmd_list(max, query, label, unread, cli.json).await?,
         Commands::Read { id, html } => cmd_read(id, html, cli.json).await?,
         Commands::Archive { id } => cmd_archive(id).await?,
         Commands::Spam { id } => cmd_spam(id).await?,

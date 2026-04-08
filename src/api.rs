@@ -107,15 +107,14 @@ impl Client {
         Ok(resp)
     }
 
-    async fn send(
-        &self,
-        method: reqwest::Method,
-        endpoint: &str,
-    ) -> Result<reqwest::Response> {
+    async fn send(&self, method: reqwest::Method, endpoint: &str) -> Result<reqwest::Response> {
         self.rate_limit().await;
         let url = format!("{}{}", BASE_URL, endpoint);
 
-        let mut req = self.http.request(method, &url).bearer_auth(&self.access_token);
+        let mut req = self
+            .http
+            .request(method, &url)
+            .bearer_auth(&self.access_token);
         req = req.header("Content-Length", "0");
         let resp = req.send().await.context("Failed to send request")?;
         Self::check_response(resp).await
