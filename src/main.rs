@@ -160,218 +160,258 @@ async fn get_client() -> Result<api::Client> {
     }
 }
 
+async fn cmd_config(client_id: String) -> Result<()> {
+    let cfg = config::Config {
+        client_id: Some(client_id),
+        client_secret: None,
+    };
+    config::save_config(&cfg)?;
+    println!("Custom client ID saved to {:?}", config::config_dir());
+    Ok(())
+}
+
+async fn cmd_login() -> Result<()> {
+    let cfg = config::load_config()?;
+    let client_id = cfg.client_id();
+    let client_secret = cfg.client_secret();
+    auth::login(client_id, client_secret).await?;
+    println!("Login successful! Tokens saved.");
+    Ok(())
+}
+
+async fn cmd_labels(json: bool) -> Result<()> {
+    let client = get_client().await?;
+    let labels = client.list_labels().await?;
+
+    if let Some(labels) = labels.labels {
+        if json {
+            println!("{}", serde_json::to_string(&labels)?);
+        } else {
+            let mut system: Vec<_> = labels
+                .iter()
+                .filter(|l| l.label_type.as_deref() == Some("system"))
+                .collect();
+            let mut user: Vec<_> = labels
+                .iter()
+                .filter(|l| l.label_type.as_deref() != Some("system"))
+                .collect();
+
+            system.sort_by(|a, b| a.name.cmp(&b.name));
+            user.sort_by(|a, b| a.name.cmp(&b.name));
+
+            println!("System labels:");
+            for label in system {
+                println!("  {} ({})", label.name, label.id);
+            }
+            if !user.is_empty() {
+                println!("\nUser labels:");
+                for label in user {
+                    println!("  {} ({})", label.name, label.id);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn cmd_list(max: u32, query: Option<String>, label: String, unread: bool, json: bool) -> Result<()> {
+    let client = get_client().await?;
+    let label_id = normalize_label(&label);
+    let query = if unread {
+        Some(match query {
+            Some(q) => format!("is:unread {}", q),
+            None => "is:unread".to_string(),
+        })
+    } else {
+        query
+    };
+    let list = client
+        .list_messages(query.as_deref(), &label_id, max)
+        .await?;
+
+    if let Some(messages) = list.messages {
+        if json {
+            let mut items = Vec::new();
+            for msg_ref in messages {
+                let msg = client.get_message(&msg_ref.id).await?;
+                items.push(serde_json::json!({
+                    "id": msg.id,
+                    "from": msg.get_header("From"),
+                    "to": msg.get_header("To"),
+                    "subject": msg.get_header("Subject"),
+                    "date": msg.get_header("Date"),
+                    "snippet": msg.snippet,
+                }));
+            }
+            println!("{}", serde_json::to_string(&items)?);
+        } else {
+            for msg_ref in messages {
+                let msg = client.get_message(&msg_ref.id).await?;
+                let from = msg.get_header("From").unwrap_or("Unknown");
+                let subject = msg.get_header("Subject").unwrap_or("(no subject)");
+                println!("{} | {} | {}", msg.id, from, subject);
+            }
+        }
+    } else if !json {
+        println!("No messages found.");
+    } else {
+        println!("[]");
+    }
+    Ok(())
+}
+
+async fn cmd_read(id: String, html: bool, json: bool) -> Result<()> {
+    let client = get_client().await?;
+    let msg = client.get_message(&id).await?;
+
+    if html {
+        if let Some(html_body) = msg.get_body_html() {
+            println!("{}", html_body);
+        } else {
+            eprintln!("No HTML body found");
+        }
+    } else if json {
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "id": msg.id,
+                "from": msg.get_header("From"),
+                "to": msg.get_header("To"),
+                "subject": msg.get_header("Subject"),
+                "date": msg.get_header("Date"),
+                "body": msg.get_body_text(),
+                "snippet": msg.snippet,
+                "list_unsubscribe": msg.get_header("List-Unsubscribe"),
+                "list_unsubscribe_post": msg.get_header("List-Unsubscribe-Post"),
+                "authentication_results": msg.get_header("Authentication-Results"),
+                "dkim_signature": msg.get_header("DKIM-Signature"),
+                "received_spf": msg.get_header("Received-SPF"),
+            }))?
+        );
+    } else {
+        println!("From: {}", msg.get_header("From").unwrap_or("Unknown"));
+        println!("To: {}", msg.get_header("To").unwrap_or("Unknown"));
+        println!(
+            "Subject: {}",
+            msg.get_header("Subject").unwrap_or("(no subject)")
+        );
+        println!("Date: {}", msg.get_header("Date").unwrap_or("Unknown"));
+        println!("---");
+
+        if let Some(body) = msg.get_body_text() {
+            println!("{}", body);
+        } else if let Some(snippet) = &msg.snippet {
+            println!("{}", snippet);
+        }
+    }
+    Ok(())
+}
+
+async fn cmd_archive(id: String) -> Result<()> {
+    let client = get_client().await?;
+    client.archive(&id).await?;
+    println!("Archived {}", id);
+    Ok(())
+}
+
+async fn cmd_spam(id: String) -> Result<()> {
+    let client = get_client().await?;
+    let _ = client.unsubscribe(&id).await;
+    client.mark_spam(&id).await?;
+    println!("Marked as spam {}", id);
+    Ok(())
+}
+
+async fn cmd_unspam(id: String) -> Result<()> {
+    let client = get_client().await?;
+    client.unspam(&id).await?;
+    println!("Moved to inbox {}", id);
+    Ok(())
+}
+
+async fn cmd_label(id: String, label: String) -> Result<()> {
+    let client = get_client().await?;
+    let label_id = normalize_label(&label);
+    client.add_label(&id, &label_id).await?;
+    println!("Added label {} to {}", label, id);
+    Ok(())
+}
+
+async fn cmd_unlabel(id: String, label: String) -> Result<()> {
+    let client = get_client().await?;
+    let label_id = normalize_label(&label);
+    client.remove_label(&id, &label_id).await?;
+    println!("Removed label {} from {}", label, id);
+    Ok(())
+}
+
+async fn cmd_delete(id: String) -> Result<()> {
+    let client = get_client().await?;
+    client.trash(&id).await?;
+    println!("Moved to trash {}", id);
+    Ok(())
+}
+
+async fn cmd_undelete(id: String) -> Result<()> {
+    let client = get_client().await?;
+    client.untrash(&id).await?;
+    println!("Restored from trash {}", id);
+    Ok(())
+}
+
+async fn cmd_mark_read(id: String) -> Result<()> {
+    let client = get_client().await?;
+    client.mark_read(&id).await?;
+    println!("Marked as read {}", id);
+    Ok(())
+}
+
+async fn cmd_mark_unread(id: String) -> Result<()> {
+    let client = get_client().await?;
+    client.mark_unread(&id).await?;
+    println!("Marked as unread {}", id);
+    Ok(())
+}
+
+async fn cmd_clear_labels(id: String) -> Result<()> {
+    let client = get_client().await?;
+    let removed = client.clear_labels(&id).await?;
+    if removed.is_empty() {
+        println!("No user labels to remove from {}", id);
+    } else {
+        println!("Removed {} labels from {}", removed.len(), id);
+    }
+    Ok(())
+}
+
+async fn cmd_unsubscribe(id: String) -> Result<()> {
+    let client = get_client().await?;
+    client.unsubscribe(&id).await?;
+    println!("Unsubscribed from {}", id);
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Config { client_id } => {
-            let cfg = config::Config {
-                client_id: Some(client_id),
-                client_secret: None,
-            };
-            config::save_config(&cfg)?;
-            println!("Custom client ID saved to {:?}", config::config_dir());
-        }
-        Commands::Login => {
-            let cfg = config::load_config()?;
-            let client_id = cfg.client_id();
-            let client_secret = cfg.client_secret();
-
-            auth::login(client_id, client_secret).await?;
-            println!("Login successful! Tokens saved.");
-        }
-        Commands::Labels => {
-            let client = get_client().await?;
-            let labels = client.list_labels().await?;
-
-            if let Some(labels) = labels.labels {
-                if cli.json {
-                    println!("{}", serde_json::to_string(&labels)?);
-                } else {
-                    let mut system: Vec<_> = labels
-                        .iter()
-                        .filter(|l| l.label_type.as_deref() == Some("system"))
-                        .collect();
-                    let mut user: Vec<_> = labels
-                        .iter()
-                        .filter(|l| l.label_type.as_deref() != Some("system"))
-                        .collect();
-
-                    system.sort_by(|a, b| a.name.cmp(&b.name));
-                    user.sort_by(|a, b| a.name.cmp(&b.name));
-
-                    println!("System labels:");
-                    for label in system {
-                        println!("  {} ({})", label.name, label.id);
-                    }
-                    if !user.is_empty() {
-                        println!("\nUser labels:");
-                        for label in user {
-                            println!("  {} ({})", label.name, label.id);
-                        }
-                    }
-                }
-            }
-        }
-        Commands::List {
-            max,
-            query,
-            label,
-            unread,
-        } => {
-            let client = get_client().await?;
-            let label_id = normalize_label(&label);
-            let query = if unread {
-                Some(match query {
-                    Some(q) => format!("is:unread {}", q),
-                    None => "is:unread".to_string(),
-                })
-            } else {
-                query
-            };
-            let list = client
-                .list_messages(query.as_deref(), &label_id, max)
-                .await?;
-
-            if let Some(messages) = list.messages {
-                if cli.json {
-                    let mut items = Vec::new();
-                    for msg_ref in messages {
-                        let msg = client.get_message(&msg_ref.id).await?;
-                        items.push(serde_json::json!({
-                            "id": msg.id,
-                            "from": msg.get_header("From"),
-                            "to": msg.get_header("To"),
-                            "subject": msg.get_header("Subject"),
-                            "date": msg.get_header("Date"),
-                            "snippet": msg.snippet,
-                        }));
-                    }
-                    println!("{}", serde_json::to_string(&items)?);
-                } else {
-                    for msg_ref in messages {
-                        let msg = client.get_message(&msg_ref.id).await?;
-                        let from = msg.get_header("From").unwrap_or("Unknown");
-                        let subject = msg.get_header("Subject").unwrap_or("(no subject)");
-                        println!("{} | {} | {}", msg.id, from, subject);
-                    }
-                }
-            } else if !cli.json {
-                println!("No messages found.");
-            } else {
-                println!("[]");
-            }
-        }
-        Commands::Read { id, html } => {
-            let client = get_client().await?;
-            let msg = client.get_message(&id).await?;
-
-            if html {
-                // Show raw HTML
-                if let Some(html_body) = msg.get_body_html() {
-                    println!("{}", html_body);
-                } else {
-                    eprintln!("No HTML body found");
-                }
-            } else if cli.json {
-                println!(
-                    "{}",
-                    serde_json::to_string(&serde_json::json!({
-                        "id": msg.id,
-                        "from": msg.get_header("From"),
-                        "to": msg.get_header("To"),
-                        "subject": msg.get_header("Subject"),
-                        "date": msg.get_header("Date"),
-                        "body": msg.get_body_text(),
-                        "snippet": msg.snippet,
-                        "list_unsubscribe": msg.get_header("List-Unsubscribe"),
-                        "list_unsubscribe_post": msg.get_header("List-Unsubscribe-Post"),
-                        "authentication_results": msg.get_header("Authentication-Results"),
-                        "dkim_signature": msg.get_header("DKIM-Signature"),
-                        "received_spf": msg.get_header("Received-SPF"),
-                    }))?
-                );
-            } else {
-                println!("From: {}", msg.get_header("From").unwrap_or("Unknown"));
-                println!("To: {}", msg.get_header("To").unwrap_or("Unknown"));
-                println!(
-                    "Subject: {}",
-                    msg.get_header("Subject").unwrap_or("(no subject)")
-                );
-                println!("Date: {}", msg.get_header("Date").unwrap_or("Unknown"));
-                println!("---");
-
-                if let Some(body) = msg.get_body_text() {
-                    println!("{}", body);
-                } else if let Some(snippet) = &msg.snippet {
-                    println!("{}", snippet);
-                }
-            }
-        }
-        Commands::Archive { id } => {
-            let client = get_client().await?;
-            client.archive(&id).await?;
-            println!("Archived {}", id);
-        }
-        Commands::Spam { id } => {
-            let client = get_client().await?;
-            // Try to unsubscribe first, ignore errors (not all messages have unsubscribe)
-            let _ = client.unsubscribe(&id).await;
-            client.mark_spam(&id).await?;
-            println!("Marked as spam {}", id);
-        }
-        Commands::Unspam { id } => {
-            let client = get_client().await?;
-            client.unspam(&id).await?;
-            println!("Moved to inbox {}", id);
-        }
-        Commands::Label { id, label } => {
-            let client = get_client().await?;
-            let label_id = normalize_label(&label);
-            client.add_label(&id, &label_id).await?;
-            println!("Added label {} to {}", label, id);
-        }
-        Commands::Unlabel { id, label } => {
-            let client = get_client().await?;
-            let label_id = normalize_label(&label);
-            client.remove_label(&id, &label_id).await?;
-            println!("Removed label {} from {}", label, id);
-        }
-        Commands::Delete { id } => {
-            let client = get_client().await?;
-            client.trash(&id).await?;
-            println!("Moved to trash {}", id);
-        }
-        Commands::Undelete { id } => {
-            let client = get_client().await?;
-            client.untrash(&id).await?;
-            println!("Restored from trash {}", id);
-        }
-        Commands::MarkRead { id } => {
-            let client = get_client().await?;
-            client.mark_read(&id).await?;
-            println!("Marked as read {}", id);
-        }
-        Commands::MarkUnread { id } => {
-            let client = get_client().await?;
-            client.mark_unread(&id).await?;
-            println!("Marked as unread {}", id);
-        }
-        Commands::ClearLabels { id } => {
-            let client = get_client().await?;
-            let removed = client.clear_labels(&id).await?;
-            if removed.is_empty() {
-                println!("No user labels to remove from {}", id);
-            } else {
-                println!("Removed {} labels from {}", removed.len(), id);
-            }
-        }
-        Commands::Unsubscribe { id } => {
-            let client = get_client().await?;
-            client.unsubscribe(&id).await?;
-            println!("Unsubscribed from {}", id);
-        }
+        Commands::Config { client_id } => cmd_config(client_id).await?,
+        Commands::Login => cmd_login().await?,
+        Commands::Labels => cmd_labels(cli.json).await?,
+        Commands::List { max, query, label, unread } => cmd_list(max, query, label, unread, cli.json).await?,
+        Commands::Read { id, html } => cmd_read(id, html, cli.json).await?,
+        Commands::Archive { id } => cmd_archive(id).await?,
+        Commands::Spam { id } => cmd_spam(id).await?,
+        Commands::Unspam { id } => cmd_unspam(id).await?,
+        Commands::Label { id, label } => cmd_label(id, label).await?,
+        Commands::Unlabel { id, label } => cmd_unlabel(id, label).await?,
+        Commands::Delete { id } => cmd_delete(id).await?,
+        Commands::Undelete { id } => cmd_undelete(id).await?,
+        Commands::MarkRead { id } => cmd_mark_read(id).await?,
+        Commands::MarkUnread { id } => cmd_mark_unread(id).await?,
+        Commands::ClearLabels { id } => cmd_clear_labels(id).await?,
+        Commands::Unsubscribe { id } => cmd_unsubscribe(id).await?,
     }
 
     Ok(())

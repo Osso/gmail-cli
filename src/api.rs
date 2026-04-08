@@ -107,36 +107,30 @@ impl Client {
         Ok(resp)
     }
 
-    async fn get<T: serde::de::DeserializeOwned>(&self, endpoint: &str) -> Result<T> {
+    async fn send(
+        &self,
+        method: reqwest::Method,
+        endpoint: &str,
+    ) -> Result<reqwest::Response> {
         self.rate_limit().await;
         let url = format!("{}{}", BASE_URL, endpoint);
 
-        let resp = self
-            .http
-            .get(&url)
-            .bearer_auth(&self.access_token)
-            .send()
-            .await
-            .context("Failed to send request")?;
+        let mut req = self.http.request(method, &url).bearer_auth(&self.access_token);
+        req = req.header("Content-Length", "0");
+        let resp = req.send().await.context("Failed to send request")?;
+        Self::check_response(resp).await
+    }
 
-        let resp = Self::check_response(resp).await?;
-        resp.json().await.context("Failed to parse JSON response")
+    async fn get<T: serde::de::DeserializeOwned>(&self, endpoint: &str) -> Result<T> {
+        self.send(reqwest::Method::GET, endpoint)
+            .await?
+            .json()
+            .await
+            .context("Failed to parse JSON response")
     }
 
     async fn post(&self, endpoint: &str) -> Result<()> {
-        self.rate_limit().await;
-        let url = format!("{}{}", BASE_URL, endpoint);
-
-        let resp = self
-            .http
-            .post(&url)
-            .bearer_auth(&self.access_token)
-            .header("Content-Length", "0")
-            .send()
-            .await
-            .context("Failed to send request")?;
-
-        Self::check_response(resp).await?;
+        self.send(reqwest::Method::POST, endpoint).await?;
         Ok(())
     }
 
