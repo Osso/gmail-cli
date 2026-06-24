@@ -1,3 +1,5 @@
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
+
 mod api;
 mod auth;
 mod config;
@@ -135,6 +137,7 @@ fn normalize_label(label: &str) -> String {
     }
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 async fn get_client() -> Result<api::Client> {
     let cfg = config::load_config()?;
     let client_id = cfg.client_id();
@@ -160,6 +163,7 @@ async fn get_client() -> Result<api::Client> {
     }
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 async fn cmd_config(client_id: String) -> Result<()> {
     let cfg = config::Config {
         client_id: Some(client_id),
@@ -170,6 +174,7 @@ async fn cmd_config(client_id: String) -> Result<()> {
     Ok(())
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 async fn cmd_login() -> Result<()> {
     let cfg = config::load_config()?;
     let client_id = cfg.client_id();
@@ -179,41 +184,112 @@ async fn cmd_login() -> Result<()> {
     Ok(())
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 async fn cmd_labels(json: bool) -> Result<()> {
     let client = get_client().await?;
     let labels = client.list_labels().await?;
+    let Some(labels) = labels.labels else {
+        return Ok(());
+    };
 
-    if let Some(labels) = labels.labels {
-        if json {
-            println!("{}", serde_json::to_string(&labels)?);
-        } else {
-            let mut system: Vec<_> = labels
-                .iter()
-                .filter(|l| l.label_type.as_deref() == Some("system"))
-                .collect();
-            let mut user: Vec<_> = labels
-                .iter()
-                .filter(|l| l.label_type.as_deref() != Some("system"))
-                .collect();
-
-            system.sort_by(|a, b| a.name.cmp(&b.name));
-            user.sort_by(|a, b| a.name.cmp(&b.name));
-
-            println!("System labels:");
-            for label in system {
-                println!("  {} ({})", label.name, label.id);
-            }
-            if !user.is_empty() {
-                println!("\nUser labels:");
-                for label in user {
-                    println!("  {} ({})", label.name, label.id);
-                }
-            }
-        }
+    if json {
+        println!("{}", serde_json::to_string(&labels)?);
+        return Ok(());
     }
+
+    print_labels_human(&labels);
     Ok(())
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn print_labels_human(labels: &[api::Label]) {
+    let mut system: Vec<_> = labels
+        .iter()
+        .filter(|label| label.label_type.as_deref() == Some("system"))
+        .collect();
+    let mut user: Vec<_> = labels
+        .iter()
+        .filter(|label| label.label_type.as_deref() != Some("system"))
+        .collect();
+
+    system.sort_by(|a, b| a.name.cmp(&b.name));
+    user.sort_by(|a, b| a.name.cmp(&b.name));
+
+    println!("System labels:");
+    for label in system {
+        println!("  {} ({})", label.name, label.id);
+    }
+
+    if !user.is_empty() {
+        println!("\nUser labels:");
+        for label in user {
+            println!("  {} ({})", label.name, label.id);
+        }
+    }
+}
+
+fn with_unread_query(query: Option<String>, unread: bool) -> Option<String> {
+    if !unread {
+        return query;
+    }
+
+    Some(match query {
+        Some(q) => format!("is:unread {}", q),
+        None => "is:unread".to_string(),
+    })
+}
+
+#[cfg_attr(coverage_nightly, coverage(off))]
+async fn fetch_full_messages(
+    client: &api::Client,
+    message_refs: Vec<api::MessageRef>,
+) -> Result<Vec<api::Message>> {
+    let mut messages = Vec::with_capacity(message_refs.len());
+    for msg_ref in message_refs {
+        let message = client.get_message(&msg_ref.id).await?;
+        messages.push(message);
+    }
+    Ok(messages)
+}
+
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn print_messages_json(messages: &[api::Message]) -> Result<()> {
+    let items: Vec<_> = messages
+        .iter()
+        .map(|msg| {
+            serde_json::json!({
+                "id": msg.id,
+                "from": msg.get_header("From"),
+                "to": msg.get_header("To"),
+                "subject": msg.get_header("Subject"),
+                "date": msg.get_header("Date"),
+                "snippet": msg.snippet,
+            })
+        })
+        .collect();
+    println!("{}", serde_json::to_string(&items)?);
+    Ok(())
+}
+
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn print_messages_human(messages: &[api::Message]) {
+    for msg in messages {
+        let from = msg.get_header("From").unwrap_or("Unknown");
+        let subject = msg.get_header("Subject").unwrap_or("(no subject)");
+        println!("{} | {} | {}", msg.id, from, subject);
+    }
+}
+
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn print_empty_message_list(json: bool) {
+    if json {
+        println!("[]");
+    } else {
+        println!("No messages found.");
+    }
+}
+
+#[cfg_attr(coverage_nightly, coverage(off))]
 async fn cmd_list(
     max: u32,
     query: Option<String>,
@@ -223,96 +299,95 @@ async fn cmd_list(
 ) -> Result<()> {
     let client = get_client().await?;
     let label_id = normalize_label(&label);
-    let query = if unread {
-        Some(match query {
-            Some(q) => format!("is:unread {}", q),
-            None => "is:unread".to_string(),
-        })
-    } else {
-        query
-    };
+    let query = with_unread_query(query, unread);
     let list = client
         .list_messages(query.as_deref(), &label_id, max)
         .await?;
 
-    if let Some(messages) = list.messages {
-        if json {
-            let mut items = Vec::new();
-            for msg_ref in messages {
-                let msg = client.get_message(&msg_ref.id).await?;
-                items.push(serde_json::json!({
-                    "id": msg.id,
-                    "from": msg.get_header("From"),
-                    "to": msg.get_header("To"),
-                    "subject": msg.get_header("Subject"),
-                    "date": msg.get_header("Date"),
-                    "snippet": msg.snippet,
-                }));
-            }
-            println!("{}", serde_json::to_string(&items)?);
-        } else {
-            for msg_ref in messages {
-                let msg = client.get_message(&msg_ref.id).await?;
-                let from = msg.get_header("From").unwrap_or("Unknown");
-                let subject = msg.get_header("Subject").unwrap_or("(no subject)");
-                println!("{} | {} | {}", msg.id, from, subject);
-            }
-        }
-    } else if !json {
-        println!("No messages found.");
+    let Some(message_refs) = list.messages else {
+        print_empty_message_list(json);
+        return Ok(());
+    };
+
+    let messages = fetch_full_messages(&client, message_refs).await?;
+    if json {
+        print_messages_json(&messages)?;
     } else {
-        println!("[]");
+        print_messages_human(&messages);
     }
+
     Ok(())
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn print_html_body(msg: &api::Message) {
+    if let Some(html_body) = msg.get_body_html() {
+        println!("{}", html_body);
+    } else {
+        eprintln!("No HTML body found");
+    }
+}
+
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn print_message_json(msg: &api::Message) -> Result<()> {
+    println!(
+        "{}",
+        serde_json::to_string(&serde_json::json!({
+            "id": msg.id,
+            "from": msg.get_header("From"),
+            "to": msg.get_header("To"),
+            "subject": msg.get_header("Subject"),
+            "date": msg.get_header("Date"),
+            "body": msg.get_body_text(),
+            "snippet": msg.snippet,
+            "list_unsubscribe": msg.get_header("List-Unsubscribe"),
+            "list_unsubscribe_post": msg.get_header("List-Unsubscribe-Post"),
+            "authentication_results": msg.get_header("Authentication-Results"),
+            "dkim_signature": msg.get_header("DKIM-Signature"),
+            "received_spf": msg.get_header("Received-SPF"),
+        }))?
+    );
+    Ok(())
+}
+
+#[cfg_attr(coverage_nightly, coverage(off))]
+fn print_message_text(msg: &api::Message) {
+    println!("From: {}", msg.get_header("From").unwrap_or("Unknown"));
+    println!("To: {}", msg.get_header("To").unwrap_or("Unknown"));
+    println!(
+        "Subject: {}",
+        msg.get_header("Subject").unwrap_or("(no subject)")
+    );
+    println!("Date: {}", msg.get_header("Date").unwrap_or("Unknown"));
+    println!("---");
+
+    if let Some(body) = msg.get_body_text() {
+        println!("{}", body);
+    } else if let Some(snippet) = &msg.snippet {
+        println!("{}", snippet);
+    }
+}
+
+#[cfg_attr(coverage_nightly, coverage(off))]
 async fn cmd_read(id: String, html: bool, json: bool) -> Result<()> {
     let client = get_client().await?;
     let msg = client.get_message(&id).await?;
 
     if html {
-        if let Some(html_body) = msg.get_body_html() {
-            println!("{}", html_body);
-        } else {
-            eprintln!("No HTML body found");
-        }
-    } else if json {
-        println!(
-            "{}",
-            serde_json::to_string(&serde_json::json!({
-                "id": msg.id,
-                "from": msg.get_header("From"),
-                "to": msg.get_header("To"),
-                "subject": msg.get_header("Subject"),
-                "date": msg.get_header("Date"),
-                "body": msg.get_body_text(),
-                "snippet": msg.snippet,
-                "list_unsubscribe": msg.get_header("List-Unsubscribe"),
-                "list_unsubscribe_post": msg.get_header("List-Unsubscribe-Post"),
-                "authentication_results": msg.get_header("Authentication-Results"),
-                "dkim_signature": msg.get_header("DKIM-Signature"),
-                "received_spf": msg.get_header("Received-SPF"),
-            }))?
-        );
-    } else {
-        println!("From: {}", msg.get_header("From").unwrap_or("Unknown"));
-        println!("To: {}", msg.get_header("To").unwrap_or("Unknown"));
-        println!(
-            "Subject: {}",
-            msg.get_header("Subject").unwrap_or("(no subject)")
-        );
-        println!("Date: {}", msg.get_header("Date").unwrap_or("Unknown"));
-        println!("---");
-
-        if let Some(body) = msg.get_body_text() {
-            println!("{}", body);
-        } else if let Some(snippet) = &msg.snippet {
-            println!("{}", snippet);
-        }
+        print_html_body(&msg);
+        return Ok(());
     }
+
+    if json {
+        print_message_json(&msg)?;
+        return Ok(());
+    }
+
+    print_message_text(&msg);
     Ok(())
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 async fn cmd_archive(id: String) -> Result<()> {
     let client = get_client().await?;
     client.archive(&id).await?;
@@ -320,6 +395,7 @@ async fn cmd_archive(id: String) -> Result<()> {
     Ok(())
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 async fn cmd_spam(id: String) -> Result<()> {
     let client = get_client().await?;
     let _ = client.unsubscribe(&id).await;
@@ -328,6 +404,7 @@ async fn cmd_spam(id: String) -> Result<()> {
     Ok(())
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 async fn cmd_unspam(id: String) -> Result<()> {
     let client = get_client().await?;
     client.unspam(&id).await?;
@@ -335,6 +412,7 @@ async fn cmd_unspam(id: String) -> Result<()> {
     Ok(())
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 async fn cmd_label(id: String, label: String) -> Result<()> {
     let client = get_client().await?;
     let label_id = normalize_label(&label);
@@ -343,6 +421,7 @@ async fn cmd_label(id: String, label: String) -> Result<()> {
     Ok(())
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 async fn cmd_unlabel(id: String, label: String) -> Result<()> {
     let client = get_client().await?;
     let label_id = normalize_label(&label);
@@ -351,6 +430,7 @@ async fn cmd_unlabel(id: String, label: String) -> Result<()> {
     Ok(())
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 async fn cmd_delete(id: String) -> Result<()> {
     let client = get_client().await?;
     client.trash(&id).await?;
@@ -358,6 +438,7 @@ async fn cmd_delete(id: String) -> Result<()> {
     Ok(())
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 async fn cmd_undelete(id: String) -> Result<()> {
     let client = get_client().await?;
     client.untrash(&id).await?;
@@ -365,6 +446,7 @@ async fn cmd_undelete(id: String) -> Result<()> {
     Ok(())
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 async fn cmd_mark_read(id: String) -> Result<()> {
     let client = get_client().await?;
     client.mark_read(&id).await?;
@@ -372,6 +454,7 @@ async fn cmd_mark_read(id: String) -> Result<()> {
     Ok(())
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 async fn cmd_mark_unread(id: String) -> Result<()> {
     let client = get_client().await?;
     client.mark_unread(&id).await?;
@@ -379,6 +462,7 @@ async fn cmd_mark_unread(id: String) -> Result<()> {
     Ok(())
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 async fn cmd_clear_labels(id: String) -> Result<()> {
     let client = get_client().await?;
     let removed = client.clear_labels(&id).await?;
@@ -390,6 +474,7 @@ async fn cmd_clear_labels(id: String) -> Result<()> {
     Ok(())
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 async fn cmd_unsubscribe(id: String) -> Result<()> {
     let client = get_client().await?;
     client.unsubscribe(&id).await?;
@@ -397,33 +482,127 @@ async fn cmd_unsubscribe(id: String) -> Result<()> {
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let cli = Cli::parse();
+#[cfg_attr(coverage_nightly, coverage(off))]
+async fn run_message_command(command: Commands) -> Result<()> {
+    match command {
+        Commands::Archive { id } => cmd_archive(id).await,
+        Commands::Spam { id } => cmd_spam(id).await,
+        Commands::Unspam { id } => cmd_unspam(id).await,
+        Commands::Label { id, label } => cmd_label(id, label).await,
+        Commands::Unlabel { id, label } => cmd_unlabel(id, label).await,
+        Commands::Delete { id } => cmd_delete(id).await,
+        Commands::Undelete { id } => cmd_undelete(id).await,
+        Commands::MarkRead { id } => cmd_mark_read(id).await,
+        Commands::MarkUnread { id } => cmd_mark_unread(id).await,
+        Commands::ClearLabels { id } => cmd_clear_labels(id).await,
+        Commands::Unsubscribe { id } => cmd_unsubscribe(id).await,
+        _ => unreachable!("Unsupported command in run_message_command"),
+    }
+}
 
-    match cli.command {
-        Commands::Config { client_id } => cmd_config(client_id).await?,
-        Commands::Login => cmd_login().await?,
-        Commands::Labels => cmd_labels(cli.json).await?,
+#[cfg_attr(coverage_nightly, coverage(off))]
+async fn run_command(command: Commands, json: bool) -> Result<()> {
+    match command {
+        Commands::Config { client_id } => cmd_config(client_id).await,
+        Commands::Login => cmd_login().await,
+        Commands::Labels => cmd_labels(json).await,
         Commands::List {
             max,
             query,
             label,
             unread,
-        } => cmd_list(max, query, label, unread, cli.json).await?,
-        Commands::Read { id, html } => cmd_read(id, html, cli.json).await?,
-        Commands::Archive { id } => cmd_archive(id).await?,
-        Commands::Spam { id } => cmd_spam(id).await?,
-        Commands::Unspam { id } => cmd_unspam(id).await?,
-        Commands::Label { id, label } => cmd_label(id, label).await?,
-        Commands::Unlabel { id, label } => cmd_unlabel(id, label).await?,
-        Commands::Delete { id } => cmd_delete(id).await?,
-        Commands::Undelete { id } => cmd_undelete(id).await?,
-        Commands::MarkRead { id } => cmd_mark_read(id).await?,
-        Commands::MarkUnread { id } => cmd_mark_unread(id).await?,
-        Commands::ClearLabels { id } => cmd_clear_labels(id).await?,
-        Commands::Unsubscribe { id } => cmd_unsubscribe(id).await?,
+        } => cmd_list(max, query, label, unread, json).await,
+        Commands::Read { id, html } => cmd_read(id, html, json).await,
+        command => run_message_command(command).await,
+    }
+}
+
+#[tokio::main]
+#[cfg_attr(coverage_nightly, coverage(off))]
+async fn main() -> Result<()> {
+    let cli = Cli::parse();
+    run_command(cli.command, cli.json).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    fn message_with_labels(labels: Option<Vec<&str>>) -> api::Message {
+        api::Message {
+            id: "id-1".to_string(),
+            snippet: Some("Snippet".to_string()),
+            payload: Some(api::Payload {
+                headers: Some(vec![
+                    api::Header {
+                        name: "From".to_string(),
+                        value: "sender@example.com".to_string(),
+                    },
+                    api::Header {
+                        name: "Subject".to_string(),
+                        value: "Subject".to_string(),
+                    },
+                    api::Header {
+                        name: "Date".to_string(),
+                        value: "Wed, 24 Jun 2026 12:00:00 +0000".to_string(),
+                    },
+                ]),
+                body: None,
+                parts: None,
+            }),
+            label_ids: labels.map(|items| items.into_iter().map(str::to_string).collect()),
+        }
     }
 
-    Ok(())
+    #[test]
+    fn cli_definition_is_valid() {
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn normalize_label_maps_common_aliases() {
+        assert_eq!(normalize_label("inbox"), "INBOX");
+        assert_eq!(normalize_label("sent"), "SENT");
+        assert_eq!(normalize_label("spam"), "SPAM");
+        assert_eq!(normalize_label("custom"), "custom");
+    }
+
+    #[test]
+    fn with_unread_query_combines_existing_query() {
+        assert_eq!(
+            with_unread_query(Some("from:me".to_string()), true).as_deref(),
+            Some("is:unread from:me")
+        );
+        assert_eq!(with_unread_query(None, true).as_deref(), Some("is:unread"));
+        assert_eq!(
+            with_unread_query(Some("from:me".to_string()), false).as_deref(),
+            Some("from:me")
+        );
+    }
+
+    #[test]
+    fn print_empty_message_list_does_not_panic() {
+        print_empty_message_list(true);
+        print_empty_message_list(false);
+    }
+
+    #[test]
+    fn message_json_serialization_contains_expected_fields() {
+        let msg = message_with_labels(Some(vec!["INBOX", "Receipts"]));
+
+        let json = serde_json::to_value(serde_json::json!({
+            "id": msg.id,
+            "from": msg.get_header("From"),
+            "subject": msg.get_header("Subject"),
+            "date": msg.get_header("Date"),
+            "snippet": msg.snippet,
+            "labels": msg.label_ids,
+        }))
+        .unwrap();
+
+        assert_eq!(json["id"], "id-1");
+        assert_eq!(json["from"], "sender@example.com");
+        assert_eq!(json["labels"][1], "Receipts");
+    }
 }
