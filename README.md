@@ -24,12 +24,15 @@ gmail login  # Opens browser for OAuth
 gmail list                  # List messages
 gmail list --unread         # List unread messages
 gmail read <id>             # Read a specific message
+gmail draft-reply <id> --body-file reply.txt --attach invoice.pdf --attach photo.jpg  # Create an unsent reply draft
 gmail archive <id>          # Archive message
 gmail spam <id>             # Mark as spam
 gmail label <id> <label>    # Add label
 gmail delete <id>           # Move to trash
 gmail unsubscribe <id>      # Open unsubscribe link
 ```
+
+`draft-reply` preserves the source Gmail thread and creates an unsent RFC 2822 reply draft. Repeat `--attach PATH` for multiple real files; the command MIME-encodes each attachment and never sends the message.
 
 ## License
 

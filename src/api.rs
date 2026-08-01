@@ -38,10 +38,30 @@ pub struct MessageRef {
 #[derive(Debug, Deserialize)]
 pub struct Message {
     pub id: String,
+    #[serde(rename = "threadId")]
+    pub thread_id: Option<String>,
     pub snippet: Option<String>,
     pub payload: Option<Payload>,
     #[serde(rename = "labelIds")]
     pub label_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DraftMessage {
+    pub raw: String,
+    #[serde(rename = "threadId")]
+    pub thread_id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CreateDraftRequest {
+    pub message: DraftMessage,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Draft {
+    pub id: String,
+    pub message: Option<MessageRef>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -231,6 +251,18 @@ impl Client {
     #[cfg_attr(coverage_nightly, coverage(off))]
     pub async fn get_message(&self, id: &str) -> Result<Message> {
         self.get(&format!("/users/me/messages/{}", urlencoding::encode(id)))
+            .await
+    }
+
+    #[cfg_attr(coverage_nightly, coverage(off))]
+    pub async fn create_draft(&self, raw: &str, thread_id: &str) -> Result<Draft> {
+        let body = CreateDraftRequest {
+            message: DraftMessage {
+                raw: raw.to_string(),
+                thread_id: thread_id.to_string(),
+            },
+        };
+        self.post_json_with_response("/users/me/drafts", &body)
             .await
     }
 
@@ -567,6 +599,7 @@ mod tests {
     fn make_message(payload: Option<Payload>) -> Message {
         Message {
             id: "test123".to_string(),
+            thread_id: None,
             snippet: Some("snippet".to_string()),
             payload,
             label_ids: None,
