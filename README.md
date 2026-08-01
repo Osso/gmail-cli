@@ -32,7 +32,20 @@ gmail delete <id>           # Move to trash
 gmail unsubscribe <id>      # Open unsubscribe link
 ```
 
-`draft-reply` preserves the source Gmail thread and creates an unsent RFC 2822 reply draft. Repeat `--attach PATH` for multiple real files; the command MIME-encodes each attachment and never sends the message.
+### `draft-reply`
+
+```bash
+gmail draft-reply <MESSAGE_ID> \\
+  --body-file reply.txt \\
+  --attach invoice.pdf \\
+  --attach photo.jpg
+```
+
+- `--body-file PATH` is required and supplies the UTF-8 reply body.
+- Repeat `--attach PATH` to include multiple local files. Each file is MIME-encoded using its filename and detected content type.
+- The command creates a Gmail draft and prints its draft ID; it never sends the message.
+- The source message ID determines the reply: the draft addresses the source message's sender, adds `Re:` when needed, preserves/extends `In-Reply-To` and `References`, and passes the source Gmail `threadId` so Gmail keeps the draft in that thread.
+- The source message must have a Gmail thread ID and a `From` header.
 
 ## License
 
