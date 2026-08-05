@@ -42,9 +42,9 @@ gmail draft-reply <MESSAGE_ID> \\
 ```
 
 - `--body-file PATH` is required and supplies the UTF-8 reply body.
-- Repeat `--attach PATH` to include multiple local files. Each file is MIME-encoded using its filename and detected content type.
+- Repeat `--attach PATH` to include multiple local files. The reply body is a UTF-8 `text/plain` MIME part; attachments make the message `multipart/mixed`, use the local filename, and are base64-encoded. Content types are selected from common filename extensions; unknown extensions use `application/octet-stream`.
 - The command creates a Gmail draft and prints its draft ID; it never sends the message.
-- The source message ID determines the reply: the draft addresses the source message's sender, adds `Re:` when needed, preserves/extends `In-Reply-To` and `References`, and passes the source Gmail `threadId` so Gmail keeps the draft in that thread.
+- The source message ID determines the reply: the draft addresses the source message's sender, adds `Re:` when needed, sets `In-Reply-To` from the source `Message-ID` when available, preserves `References` and appends that `Message-ID` when it is not already present, and passes the source Gmail `threadId` so Gmail keeps the draft in that thread.
 - The source message must have a Gmail thread ID and a `From` header.
 
 ## License
