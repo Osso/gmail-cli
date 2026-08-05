@@ -1,11 +1,11 @@
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
-mod api;
-mod auth;
-mod config;
-
-use anyhow::Result;
+use anyhow::{Context, Result};
+use base64::Engine;
 use clap::{Parser, Subcommand};
+use gmail::{api, auth, config, mime};
+use std::fs;
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "gmail")]
@@ -52,6 +52,18 @@ enum Commands {
         /// Show raw HTML instead of text
         #[arg(long)]
         html: bool,
+    },
+    /// Create a reply draft without sending it
+    #[command(name = "draft-reply")]
+    DraftReply {
+        /// Source message ID
+        id: String,
+        /// File containing the reply body
+        #[arg(long, value_name = "PATH")]
+        body_file: PathBuf,
+        /// Attachment path; repeat for multiple attachments
+        #[arg(long = "attach", value_name = "PATH")]
+        attachments: Vec<PathBuf>,
     },
     /// Archive a message (remove from inbox)
     Archive {
@@ -388,6 +400,33 @@ async fn cmd_read(id: String, html: bool, json: bool) -> Result<()> {
 }
 
 #[cfg_attr(coverage_nightly, coverage(off))]
+async fn cmd_draft_reply(
+    id: String,
+    body_file: PathBuf,
+    attachment_paths: Vec<PathBuf>,
+) -> Result<()> {
+    let client = get_client().await?;
+    let source_message = client.get_message(&id).await?;
+    let source = mime::ReplySource::from_message(&source_message)?;
+    let thread_id = source
+        .thread_id
+        .as_deref()
+        .context("Source message has no thread ID")?;
+    let body = fs::read_to_string(&body_file)
+        .with_context(|| format!("Failed to read reply body {}", body_file.display()))?;
+    let attachments = attachment_paths
+        .iter()
+        .map(|path| mime::Attachment::from_path(path))
+        .collect::<Result<Vec<_>>>()?;
+    let raw = mime::build_reply_mime(&source, &body, &attachments, &mime::new_boundary())?;
+    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw);
+    let draft = client.create_draft(&encoded, thread_id).await?;
+
+    println!("Created draft {}", draft.id);
+    Ok(())
+}
+
+#[cfg_attr(coverage_nightly, coverage(off))]
 async fn cmd_archive(id: String) -> Result<()> {
     let client = get_client().await?;
     client.archive(&id).await?;
@@ -513,6 +552,11 @@ async fn run_command(command: Commands, json: bool) -> Result<()> {
             unread,
         } => cmd_list(max, query, label, unread, json).await,
         Commands::Read { id, html } => cmd_read(id, html, json).await,
+        Commands::DraftReply {
+            id,
+            body_file,
+            attachments,
+        } => cmd_draft_reply(id, body_file, attachments).await,
         command => run_message_command(command).await,
     }
 }
@@ -532,6 +576,7 @@ mod tests {
     fn message_with_labels(labels: Option<Vec<&str>>) -> api::Message {
         api::Message {
             id: "id-1".to_string(),
+            thread_id: None,
             snippet: Some("Snippet".to_string()),
             payload: Some(api::Payload {
                 headers: Some(vec![
@@ -558,6 +603,41 @@ mod tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn parses_draft_reply_with_repeated_attachments() {
+        let cli = Cli::try_parse_from([
+            "gmail",
+            "draft-reply",
+            "message-id",
+            "--body-file",
+            "reply.txt",
+            "--attach",
+            "invoice.pdf",
+            "--attach",
+            "chair.jpg",
+        ])
+        .expect("draft-reply command should parse");
+
+        match cli.command {
+            Commands::DraftReply {
+                id,
+                body_file,
+                attachments,
+            } => {
+                assert_eq!(id, "message-id");
+                assert_eq!(body_file, std::path::PathBuf::from("reply.txt"));
+                assert_eq!(
+                    attachments,
+                    vec![
+                        std::path::PathBuf::from("invoice.pdf"),
+                        std::path::PathBuf::from("chair.jpg")
+                    ]
+                );
+            }
+            _ => panic!("expected draft-reply command"),
+        }
     }
 
     #[test]
