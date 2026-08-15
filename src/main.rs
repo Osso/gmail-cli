@@ -5,7 +5,7 @@ use base64::Engine;
 use clap::{Parser, Subcommand};
 use gmail::{api, auth, config, mime};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(name = "gmail")]
@@ -402,6 +402,20 @@ async fn cmd_read(id: String, html: bool, json: bool) -> Result<()> {
     Ok(())
 }
 
+fn read_reply_parts(
+    body_file: &Path,
+    attachment_paths: &[PathBuf],
+) -> Result<(String, Vec<mime::Attachment>)> {
+    let body = fs::read_to_string(body_file)
+        .with_context(|| format!("Failed to read reply body {}", body_file.display()))?;
+    let attachments = attachment_paths
+        .iter()
+        .map(|path| mime::Attachment::from_path(path))
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok((body, attachments))
+}
+
 #[cfg_attr(coverage_nightly, coverage(off))]
 async fn cmd_draft_reply(
     id: String,
@@ -416,12 +430,7 @@ async fn cmd_draft_reply(
         .thread_id
         .as_deref()
         .context("Source message has no thread ID")?;
-    let body = fs::read_to_string(&body_file)
-        .with_context(|| format!("Failed to read reply body {}", body_file.display()))?;
-    let attachments = attachment_paths
-        .iter()
-        .map(|path| mime::Attachment::from_path(path))
-        .collect::<Result<Vec<_>>>()?;
+    let (body, attachments) = read_reply_parts(&body_file, &attachment_paths)?;
     let raw = mime::build_reply_mime_with_recipient(
         &source,
         &body,
