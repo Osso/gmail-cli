@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 const BASE_URL: &str = "https://gmail.googleapis.com/gmail/v1";
 const MIN_REQUEST_INTERVAL: Duration = Duration::from_millis(100);
+const SEND_DRAFT_ENDPOINT: &str = "/users/me/drafts/send";
 
 pub struct Client {
     http: reqwest::Client,
@@ -56,6 +57,11 @@ pub struct DraftMessage {
 #[derive(Debug, Serialize)]
 pub struct CreateDraftRequest {
     pub message: DraftMessage,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SendDraftRequest {
+    pub id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -263,6 +269,13 @@ impl Client {
             },
         };
         self.post_json_with_response("/users/me/drafts", &body)
+            .await
+    }
+
+    #[cfg_attr(coverage_nightly, coverage(off))]
+    pub async fn send_draft(&self, id: &str) -> Result<Message> {
+        let body = SendDraftRequest { id: id.to_string() };
+        self.post_json_with_response(SEND_DRAFT_ENDPOINT, &body)
             .await
     }
 
@@ -610,6 +623,35 @@ mod tests {
         Body {
             data: Some(URL_SAFE_NO_PAD.encode(text)),
         }
+    }
+
+    #[test]
+    fn serializes_send_draft_request_with_only_the_draft_id() {
+        let request = SendDraftRequest {
+            id: "r-123".to_string(),
+        };
+
+        let json = serde_json::to_value(request).expect("send request should serialize");
+
+        assert_eq!(json, serde_json::json!({"id": "r-123"}));
+    }
+
+    #[test]
+    fn send_draft_uses_the_official_fixed_endpoint() {
+        assert_eq!(SEND_DRAFT_ENDPOINT, "/users/me/drafts/send");
+    }
+
+    #[test]
+    fn deserializes_sent_message_response_and_rejects_malformed_response() {
+        let message: Message = serde_json::from_str(
+            r#"{"id":"sent-123","threadId":"thread-123","labelIds":["SENT"]}"#,
+        )
+        .expect("sent message response should deserialize");
+
+        assert_eq!(message.id, "sent-123");
+        assert_eq!(message.thread_id.as_deref(), Some("thread-123"));
+        assert_eq!(message.label_ids, Some(vec!["SENT".to_string()]));
+        assert!(serde_json::from_str::<Message>(r#"{"threadId":"thread-123"}"#).is_err());
     }
 
     #[test]

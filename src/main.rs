@@ -68,6 +68,12 @@ enum Commands {
         #[arg(long = "attach", value_name = "PATH")]
         attachments: Vec<PathBuf>,
     },
+    /// Send one existing Gmail draft without rebuilding it
+    #[command(name = "send-draft")]
+    SendDraft {
+        /// Immutable Gmail draft resource ID
+        id: String,
+    },
     /// Archive a message (remove from inbox)
     Archive {
         /// Message ID
@@ -446,6 +452,14 @@ async fn cmd_draft_reply(
 }
 
 #[cfg_attr(coverage_nightly, coverage(off))]
+async fn cmd_send_draft(id: String) -> Result<()> {
+    let client = get_client().await?;
+    let message = client.send_draft(&id).await?;
+    println!("{}", message.id);
+    Ok(())
+}
+
+#[cfg_attr(coverage_nightly, coverage(off))]
 async fn cmd_archive(id: String) -> Result<()> {
     let client = get_client().await?;
     client.archive(&id).await?;
@@ -577,6 +591,7 @@ async fn run_command(command: Commands, json: bool) -> Result<()> {
             to,
             attachments,
         } => cmd_draft_reply(id, body_file, to, attachments).await,
+        Commands::SendDraft { id } => cmd_send_draft(id).await,
         command => run_message_command(command).await,
     }
 }
@@ -623,6 +638,20 @@ mod tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn parses_send_draft_with_exactly_one_resource_id() {
+        let cli = Cli::try_parse_from(["gmail", "send-draft", "r-123"])
+            .expect("send-draft command should parse");
+
+        match cli.command {
+            Commands::SendDraft { id } => assert_eq!(id, "r-123"),
+            _ => panic!("expected send-draft command"),
+        }
+
+        assert!(Cli::try_parse_from(["gmail", "send-draft"]).is_err());
+        assert!(Cli::try_parse_from(["gmail", "send-draft", "r-123", "extra"]).is_err());
     }
 
     #[test]
