@@ -61,6 +61,9 @@ enum Commands {
         /// File containing the reply body
         #[arg(long, value_name = "PATH")]
         body_file: PathBuf,
+        /// Override the reply recipient instead of replying to the source sender
+        #[arg(long, value_name = "ADDRESS")]
+        to: Option<String>,
         /// Attachment path; repeat for multiple attachments
         #[arg(long = "attach", value_name = "PATH")]
         attachments: Vec<PathBuf>,
@@ -403,6 +406,7 @@ async fn cmd_read(id: String, html: bool, json: bool) -> Result<()> {
 async fn cmd_draft_reply(
     id: String,
     body_file: PathBuf,
+    recipient: Option<String>,
     attachment_paths: Vec<PathBuf>,
 ) -> Result<()> {
     let client = get_client().await?;
@@ -418,7 +422,13 @@ async fn cmd_draft_reply(
         .iter()
         .map(|path| mime::Attachment::from_path(path))
         .collect::<Result<Vec<_>>>()?;
-    let raw = mime::build_reply_mime(&source, &body, &attachments, &mime::new_boundary())?;
+    let raw = mime::build_reply_mime_with_recipient(
+        &source,
+        &body,
+        &attachments,
+        &mime::new_boundary(),
+        recipient.as_deref(),
+    )?;
     let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw);
     let draft = client.create_draft(&encoded, thread_id).await?;
 
@@ -555,8 +565,9 @@ async fn run_command(command: Commands, json: bool) -> Result<()> {
         Commands::DraftReply {
             id,
             body_file,
+            to,
             attachments,
-        } => cmd_draft_reply(id, body_file, attachments).await,
+        } => cmd_draft_reply(id, body_file, to, attachments).await,
         command => run_message_command(command).await,
     }
 }
@@ -613,6 +624,8 @@ mod tests {
             "message-id",
             "--body-file",
             "reply.txt",
+            "--to",
+            "review@example.com",
             "--attach",
             "invoice.pdf",
             "--attach",
@@ -624,10 +637,12 @@ mod tests {
             Commands::DraftReply {
                 id,
                 body_file,
+                to,
                 attachments,
             } => {
                 assert_eq!(id, "message-id");
                 assert_eq!(body_file, std::path::PathBuf::from("reply.txt"));
+                assert_eq!(to.as_deref(), Some("review@example.com"));
                 assert_eq!(
                     attachments,
                     vec![

@@ -73,10 +73,20 @@ pub fn build_reply_mime(
     attachments: &[Attachment],
     boundary: &str,
 ) -> Result<Vec<u8>> {
+    build_reply_mime_with_recipient(source, body, attachments, boundary, None)
+}
+
+pub fn build_reply_mime_with_recipient(
+    source: &ReplySource,
+    body: &str,
+    attachments: &[Attachment],
+    boundary: &str,
+    recipient: Option<&str>,
+) -> Result<Vec<u8>> {
     validate_header_value("boundary", boundary)?;
 
     let mut message = String::new();
-    append_reply_headers(&mut message, source)?;
+    append_reply_headers(&mut message, source, recipient)?;
     if attachments.is_empty() {
         append_text_part(&mut message, body);
     } else {
@@ -86,7 +96,11 @@ pub fn build_reply_mime(
     Ok(message.into_bytes())
 }
 
-fn append_reply_headers(message: &mut String, source: &ReplySource) -> Result<()> {
+fn append_reply_headers(
+    message: &mut String,
+    source: &ReplySource,
+    recipient: Option<&str>,
+) -> Result<()> {
     validate_source_headers(
         &source.to,
         &source.subject,
@@ -97,8 +111,10 @@ fn append_reply_headers(message: &mut String, source: &ReplySource) -> Result<()
     let subject = reply_subject(&source.subject);
     let in_reply_to = source.message_id.as_deref();
     let references = reply_references(source.references.as_deref(), in_reply_to);
+    let recipient = recipient.unwrap_or(&source.to);
+    validate_header_value("To", recipient)?;
 
-    message.push_str(&format!("To: {}\r\n", encode_address_header(&source.to)));
+    message.push_str(&format!("To: {}\r\n", encode_address_header(recipient)));
     message.push_str(&format!("Subject: {}\r\n", encode_header_value(&subject)));
     if let Some(value) = in_reply_to {
         message.push_str(&format!("In-Reply-To: {value}\r\n"));
@@ -353,6 +369,43 @@ mod tests {
         assert!(text.ends_with("First line\r\nSecond line\r\n"));
         assert_eq!(text.matches("Subject:").count(), 1);
         assert_eq!(text.matches("References:").count(), 1);
+    }
+
+    #[test]
+    fn uses_recipient_override_without_changing_reply_metadata() {
+        let raw = build_reply_mime_with_recipient(
+            &source(),
+            "Reply",
+            &[],
+            "test-boundary",
+            Some("review@example.com"),
+        )
+        .expect("MIME should build");
+        let text = String::from_utf8(raw).expect("MIME should be UTF-8 for this fixture");
+
+        assert!(text.contains("To: review@example.com\r\n"));
+        assert!(!text.contains("To: Sender <sender@example.com>\r\n"));
+        assert!(text.contains("Subject: Re: Herman Miller Store\r\n"));
+        assert!(text.contains("In-Reply-To: <original@example.com>\r\n"));
+        assert!(text.contains("References: <earlier@example.com> <original@example.com>\r\n"));
+    }
+
+    #[test]
+    fn rejects_recipient_header_injection() {
+        let error = build_reply_mime_with_recipient(
+            &source(),
+            "Reply",
+            &[],
+            "test-boundary",
+            Some("review@example.com\r\nBcc: attacker@example.com"),
+        )
+        .expect_err("recipient line breaks must be rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("To contains an invalid line break")
+        );
     }
 
     #[test]
